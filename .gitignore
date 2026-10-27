@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Database WAL / SHM (keep main .db file)
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Teamwork agent internal logs & memory
+.agents/teamwork/auditor_*
+.agents/teamwork/challenger_*
+.agents/teamwork/reviewer_*
+.agents/teamwork/explorer_*
+.agents/teamwork/spec_miner_*
+.agents/teamwork/worker_*
+.agents/teamwork/orchestrator/
+.agents/teamwork/sentinel/
+.agents/teamwork/test_writer_track_a/
