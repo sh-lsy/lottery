@@ -16,6 +16,7 @@ from backend.app.database import init_db, SessionLocal
 from backend.app.models import DrawHistory, FeatureMetrics
 from backend.app.services.crawler import CrawlerService
 from backend.app.services.feature_engine import FeatureEngine
+from backend.app.services.predictor import PredictionService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,6 +95,46 @@ def handle_compute_features(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_predict(args: argparse.Namespace) -> int:
+    """
+    Handle the `predict` and `predict-issue` commands (Milestone 3).
+    Generates a 5-line prediction ticket, displays formatted stdout, and persists to SQLite.
+    """
+    init_db()
+    service = PredictionService()
+
+    target_issue = getattr(args, "issue", None)
+    strategy = getattr(args, "strategy", "CONCENTRATED_BREAK_EVEN")
+
+    try:
+        batch = service.generate_5_line_prediction(target_issue=target_issue, strategy=strategy)
+    except Exception as e:
+        logger.error("Prediction failed: %s", e)
+        print(f"\n[Prediction Error] {e}\n", file=sys.stderr)
+        return 1
+
+    print("\n" + "=" * 80)
+    print("SSQ-Quant-System 5-Line Strategy Prediction (Milestone 3)")
+    print("=" * 80)
+    print(f"Target Issue : {batch.target_issue}")
+    print(f"Strategy     : {batch.strategy_type}")
+    print(f"Model Engine : {batch.model_name}")
+    print(f"Batch ID     : {batch.id} | Status: {batch.verify_status} | Total Notes: {batch.total_notes} | Cost: {batch.virtual_cost} RMB")
+    print("-" * 80)
+
+    for item in sorted(batch.items, key=lambda x: x.note_index):
+        reds_str = f"[{item.red_1:02d}, {item.red_2:02d}, {item.red_3:02d}, {item.red_4:02d}, {item.red_5:02d}, {item.red_6:02d}]"
+        blue_str = f"[{item.blue_1:02d}]"
+        print(f"Note {item.note_index}: {reds_str} + {blue_str}  (Conf: {item.confidence_score:.2%}) | {item.rationale or ''}")
+
+    print("-" * 80)
+    if batch.ai_reasoning_md:
+        print(batch.ai_reasoning_md.strip())
+    print("=" * 80)
+    print(f"[Success] 1 batch and {len(batch.items)} items persisted to SQLite database.\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct command-line argument parser."""
     parser = argparse.ArgumentParser(
@@ -136,7 +177,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--strategy",
         type=str,
         default="CONCENTRATED_BREAK_EVEN",
-        choices=["CONCENTRATED_BREAK_EVEN", "DISPERSED_BASELINE", "STAT_FILTER", "ML_PROB"],
+        help="Prediction strategy model (e.g. CONCENTRATED_BREAK_EVEN, break_even, DISPERSED_BASELINE, STAT_FILTER, ML_PROB)",
+    )
+
+    # Command: predict-issue (Milestone 3 alias)
+    pred_issue_parser = subparsers.add_parser("predict-issue", help="Generate 5-line prediction ticket (alias for predict)")
+    pred_issue_parser.add_argument("--issue", type=str, required=False, help="Target issue number to predict")
+    pred_issue_parser.add_argument(
+        "--strategy",
+        type=str,
+        default="CONCENTRATED_BREAK_EVEN",
         help="Prediction strategy model",
     )
 
@@ -165,9 +215,8 @@ def main(argv: Optional[list] = None) -> int:
         return handle_sync(args)
     elif args.subcommand == "compute-features":
         return handle_compute_features(args)
-    elif args.subcommand == "predict":
-        print("[M3 Notice] 5-Line Strategy Prediction Engine scheduled for Milestone 3.")
-        return 0
+    elif args.subcommand in ("predict", "predict-issue"):
+        return handle_predict(args)
     elif args.subcommand == "verify":
         print("[M4 Notice] Prize Verification Engine scheduled for Milestone 4.")
         return 0
