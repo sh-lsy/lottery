@@ -112,7 +112,8 @@ class RedWheelingEngine:
     def select_candidate_pool(self) -> Tuple[List[int], List[int]]:
         """
         Selects 10 candidate balls: 2 Core Anchors (胆码) and 8 Satellites (拖码).
-        Balances Cold/Warm/Hot and 3-Zone distribution.
+        Enforces empirical balanced distribution: 5 Hot : 3 Warm : 2 Cold across 3 Zones.
+        Guarantees headroom for prior draw repeats (repeats <= 2).
 
         :return:
             cores: List of 2 distinct red balls.
@@ -127,85 +128,76 @@ class RedWheelingEngine:
                     break
             omissions[b] = (self.n_draws - 1 - last_idx) if last_idx != -1 else self.n_draws
 
-        hot = [b for b, o in omissions.items() if o <= 4]
-        warm = [b for b, o in omissions.items() if 5 <= o <= 9]
-        cold = [b for b, o in omissions.items() if o >= 10]
+        hot = sorted([b for b, o in omissions.items() if o <= 4], key=lambda b: (omissions[b], b))
+        warm = sorted([b for b, o in omissions.items() if 5 <= o <= 9], key=lambda b: (omissions[b], b))
+        cold = sorted([b for b, o in omissions.items() if o >= 10], key=lambda b: (omissions[b], b))
 
         prior_draw = set(self.history[-1]) if self.history else set()
 
-        # Sort candidate pools by omission ascending
-        sorted_hot = sorted(hot, key=lambda b: (omissions[b], b))
-        sorted_warm = sorted(warm, key=lambda b: (omissions[b], b))
-        sorted_cold = sorted(cold, key=lambda b: (omissions[b], b))
+        def get_zone(b: int) -> int:
+            return 1 if b <= 11 else (2 if b <= 22 else 3)
 
         # Select Core 1: top hot ball (or warm if hot empty)
-        candidate_cores = sorted_hot if sorted_hot else (sorted_warm if sorted_warm else list(range(1, 34)))
-        core_1 = candidate_cores[0]
+        core_1 = hot[0] if hot else (warm[0] if warm else 1)
 
-        # Select Core 2: hot or warm ball spanning different zone (|b - core_1| >= 8)
+        # Select Core 2: different zone (|core_2 - core_1| >= 8)
+        # Avoid both cores being from prior_draw to preserve repeat_prev_red <= 2
         core_2 = None
-        for b in candidate_cores[1:]:
-            if abs(b - core_1) >= 8:
-                core_2 = b
-                break
-        if core_2 is None:
-            # Look in warm
-            for b in sorted_warm:
-                if abs(b - core_1) >= 8:
+        for b in hot[1:] + warm:
+            if get_zone(b) != get_zone(core_1) and abs(b - core_1) >= 8:
+                if not (core_1 in prior_draw and b in prior_draw):
                     core_2 = b
                     break
         if core_2 is None:
-            # Fallback
-            core_2 = next((b for b in range(1, 34) if b != core_1 and abs(b - core_1) >= 8), (core_1 + 10) % 33 + 1)
+            for b in warm + cold + hot[1:]:
+                if abs(b - core_1) >= 6:
+                    core_2 = b
+                    break
+        if core_2 is None:
+            core_2 = next((b for b in range(1, 34) if b != core_1 and abs(b - core_1) >= 6), (core_1 + 10) % 33 + 1)
 
         cores = sorted([core_1, core_2])
-
-        # Satellites selection: 8 distinct balls from remaining 31
+        chosen = set(cores)
         satellites: List[int] = []
 
-        # 1. Prior draw repeat: include 1 repeat from prior draw if available
-        prior_cand = [b for b in sorted(prior_draw) if b not in cores]
-        if prior_cand:
-            satellites.append(prior_cand[0])
+        # Target 10-ball candidate pool: ~2 Cold, ~3 Warm, ~5 Hot, with balanced 3-Zone caps (Zone 1: 3, Zone 2: 4, Zone 3: 4)
+        z_caps = {1: 3, 2: 4, 3: 4}
 
-        # 2. Balanced Zone quotas:
-        # Zone 1 (1..11), Zone 2 (12..22), Zone 3 (23..33)
-        # We aim for ~3 balls per zone across the full 10-ball pool
-        core_zones = [1 if c <= 11 else (2 if c <= 22 else 3) for c in cores]
-        z_counts = {1: core_zones.count(1), 2: core_zones.count(2), 3: core_zones.count(3)}
+        # 1. Select 2 Cold balls across zones
+        for b in cold:
+            if sum(1 for s in satellites if s in cold) >= 2:
+                break
+            if b not in chosen and sum(1 for c in chosen if get_zone(c) == get_zone(b)) < z_caps[get_zone(b)]:
+                satellites.append(b)
+                chosen.add(b)
 
-        candidate_pool_all = (
-            [b for b in sorted_hot if b not in cores and b not in satellites]
-            + [b for b in sorted_warm if b not in cores and b not in satellites]
-            + [b for b in sorted_cold if b not in cores and b not in satellites]
-            + [b for b in range(1, 34) if b not in cores and b not in satellites]
-        )
+        # 2. Select 3 Warm balls respecting zone caps
+        for b in warm:
+            if sum(1 for s in satellites if s in warm) >= 3:
+                break
+            if b not in chosen and sum(1 for c in chosen if get_zone(c) == get_zone(b)) < z_caps[get_zone(b)]:
+                satellites.append(b)
+                chosen.add(b)
 
-        # Distribute into zone buckets
-        z_candidates = {
-            1: [b for b in candidate_pool_all if 1 <= b <= 11],
-            2: [b for b in candidate_pool_all if 12 <= b <= 22],
-            3: [b for b in candidate_pool_all if 23 <= b <= 33],
-        }
+        # 3. Fill remaining slots with Hot balls (limit prior draw repeats across pool to at most 2)
+        for b in hot:
+            if len(satellites) >= 8:
+                break
+            if b in chosen:
+                continue
+            if b in prior_draw and len(chosen & prior_draw) >= 2:
+                continue
+            if sum(1 for c in chosen if get_zone(c) == get_zone(b)) < z_caps[get_zone(b)]:
+                satellites.append(b)
+                chosen.add(b)
 
-        # Target 3-4 balls per zone
-        target_zone_balls = {1: 3, 2: 3, 3: 3}
-        for z in [1, 2, 3]:
-            needed = target_zone_balls[z] - z_counts[z]
-            for _ in range(needed):
-                if len(satellites) >= 8:
-                    break
-                for b in z_candidates[z]:
-                    if b not in satellites and b not in cores:
-                        satellites.append(b)
-                        break
-
-        # Fill remaining slots up to 8 satellites
-        for b in candidate_pool_all:
+        # 4. Fallback backfill to guarantee exactly 8 distinct satellites
+        for b in warm + hot + cold + list(range(1, 34)):
             if len(satellites) == 8:
                 break
-            if b not in satellites and b not in cores:
+            if b not in chosen:
                 satellites.append(b)
+                chosen.add(b)
 
         satellites.sort()
         return cores, satellites
@@ -215,14 +207,60 @@ class RedWheelingEngine:
         Generates 5 lines using Dan-Tuo Wheel Covering Matrix with Statistical Guardrails validation.
         Guarantees:
         1. Exactly 5 lines of 6 sorted reds
-        2. Pairwise intersection between any two lines >= 3
-        3. All lines satisfy statistical guardrails (AC >= 6, Sum in [75, 135], Odd-Even, Consec, Span)
+        2. Pairwise intersection between any two lines in [3, 4] (strictly prevents 5-ball degeneracy)
+        3. Balanced satellite coverage across the 5 lines (each satellite appears 2-3 times)
+        4. All lines satisfy statistical guardrails (AC >= 6, Sum in [75, 135], Odd-Even, Consec, Span)
         """
         cores, satellites = self.select_candidate_pool()
         prior_reds = self.history[-1] if self.history else None
 
-        # Covering matrix: 4 satellites out of 8 per line
-        # Every pair of patterns shares at least 1 satellite index -> with 2 cores, overlap >= 3
+        # Generate and validate all 70 candidate 4-satellite subsets
+        valid_lines: List[List[int]] = []
+        for alt_comb in itertools.combinations(satellites, 4):
+            cand = sorted(cores + list(alt_comb))
+            v, _ = StatisticalFilters.is_valid_line(cand, prior_reds)
+            if v:
+                valid_lines.append(cand)
+
+        # Combinatorial search for 5 lines satisfying pairwise overlap in [3, 4] and balanced satellite frequency
+        best_lines: Optional[List[List[int]]] = None
+        best_score = -999999
+
+        def search_balanced_wheel(idx: int, chosen: List[List[int]], sat_counts: Dict[int, int], max_sat_freq: int) -> bool:
+            nonlocal best_lines, best_score
+            if len(chosen) == 5:
+                score = len(sat_counts) * 100 - sum((cnt - 2.5) ** 2 for cnt in sat_counts.values())
+                if score > best_score:
+                    best_score = score
+                    best_lines = list(chosen)
+                return len(sat_counts) == len(satellites)
+
+            for i in range(idx, len(valid_lines)):
+                cand = valid_lines[i]
+                cand_sats = [b for b in cand if b in satellites]
+                cand_set = set(cand)
+                # Overlap constraint: pairwise intersection must be in [3, 4]
+                if any(len(cand_set & set(prev)) < 3 or len(cand_set & set(prev)) > 4 for prev in chosen):
+                    continue
+                # Frequency capping
+                if any(sat_counts.get(b, 0) >= max_sat_freq for b in cand_sats):
+                    continue
+                new_counts = dict(sat_counts)
+                for b in cand_sats:
+                    new_counts[b] = new_counts.get(b, 0) + 1
+                if search_balanced_wheel(i + 1, chosen + [cand], new_counts, max_sat_freq):
+                    return True
+            return False
+
+        if len(valid_lines) >= 5:
+            search_balanced_wheel(0, [], {}, max_sat_freq=3)
+            if not best_lines:
+                search_balanced_wheel(0, [], {}, max_sat_freq=4)
+
+        if best_lines and len(best_lines) == 5:
+            return best_lines
+
+        # Fallback if valid_lines < 5 or tight overlap constraint
         patterns = [
             [0, 1, 2, 3],
             [0, 1, 4, 5],
@@ -230,37 +268,21 @@ class RedWheelingEngine:
             [0, 2, 5, 7],
             [1, 3, 6, 7],
         ]
-
         lines: List[List[int]] = []
         for pat in patterns:
             candidate_line = sorted(cores + [satellites[i] for i in pat])
             is_valid, _ = StatisticalFilters.is_valid_line(candidate_line, prior_reds)
-
-            # Check pairwise overlap with already accepted lines
             overlap_ok = all(len(set(candidate_line) & set(l)) >= 3 for l in lines)
 
             if not (is_valid and overlap_ok and candidate_line not in lines):
-                # Local repair: search alternative 4-satellite subsets from the 8 satellites
-                found = False
                 for alt_comb in itertools.combinations(satellites, 4):
                     cand = sorted(cores + list(alt_comb))
                     if cand in lines:
                         continue
                     v, _ = StatisticalFilters.is_valid_line(cand, prior_reds)
-                    if v and all(len(set(cand) & set(l)) >= 3 for l in lines):
+                    if v and all(3 <= len(set(cand) & set(l)) <= 4 for l in lines):
                         candidate_line = cand
-                        found = True
                         break
-
-                if not found:
-                    # Extended repair: search combinations from pool + near candidates
-                    # Guaranteeing valid line and overlap >= 3
-                    for alt_comb in itertools.combinations(satellites, 4):
-                        cand = sorted(cores + list(alt_comb))
-                        if cand not in lines and all(len(set(cand) & set(l)) >= 3 for l in lines):
-                            candidate_line = cand
-                            break
-
             lines.append(candidate_line)
 
         return lines

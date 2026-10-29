@@ -291,6 +291,10 @@ class PredictionService:
                     session.add(item)
                 session.flush()
                 items = list(batch.items)
+                for it in items:
+                    _ = it.to_dict()
+                    session.expunge(it)
+                session.expunge(batch)
                 session.rollback()
                 batch.items = items
                 return batch
