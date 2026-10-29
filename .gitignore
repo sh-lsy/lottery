@@ -22,13 +22,11 @@ ENV/
 *.swp
 *.swo
 
+# Frontend dependencies & build artifacts
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
 # Teamwork agent internal logs & memory
-.agents/teamwork/auditor_*
-.agents/teamwork/challenger_*
-.agents/teamwork/reviewer_*
-.agents/teamwork/explorer_*
-.agents/teamwork/spec_miner_*
-.agents/teamwork/worker_*
-.agents/teamwork/orchestrator/
-.agents/teamwork/sentinel/
-.agents/teamwork/test_writer_track_a/
+.agents/

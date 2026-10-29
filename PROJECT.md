@@ -2,44 +2,56 @@
 
 ## Architecture
 
-SSQ-Quant-System is a discrete sequence quantitative analysis and prediction platform for Shuangseqiu lottery data, designed with strict separation of concerns, zero lookahead bias in backtesting, robust data integrity, and negative-expectation risk management.
+SSQ-Quant-System is a discrete sequence quantitative analysis and prediction platform for Shuangseqiu lottery data, designed with strict separation of concerns, zero lookahead bias in backtesting, robust data integrity, negative-expectation risk management, and a high-performance Vue 3 dark quant terminal.
 
 ```
 +-----------------------------------------------------------------------------------+
-|                                  User / CLI / API                                 |
+|               Vue 3 + TypeScript + Element Plus + Tailwind + ECharts              |
+|                             Dark Quant Terminal UI                                |
+|  - View 1: Panoramic History & Trend Dashboard (/history)                         |
+|  - View 2: AI Strategy Prediction Generation Lab (/predict)                       |
+|  - View 3: Prediction Archive & Verification Review Center (/archive)              |
+|  - View 4: Historical Collision Sandbox Tool (/sandbox)                           |
 +-----------------------------------------------------------------------------------+
-                                          |
+                                          | HTTP / REST (Vite Proxy /api)
                                           v
 +-----------------------------------------------------------------------------------+
-|                             FastAPI & CLI Controller Layer                        |
-|   - backend.app.cli (sync, compute-features, predict, backtest, verify, report)   |
-|   - backend.app.api (history, features, predict, backtest, archive)               |
+|                             FastAPI & CLI Service Layer                           |
+|   - backend.app.main (FastAPI app, CORS, lifespan DB init, CollisionCache prewarm)|
+|   - backend.app.api.history (draws pagination, features, omissions, sync)         |
+|   - backend.app.api.predict (offline 5-line quant prediction, persistence)        |
+|   - backend.app.api.backtest (sandbox collision, prize verification, backtest)   |
+|   - backend.app.api.adaptive (evolution status, trajectory, trigger/reset)        |
+|   - backend.app.cli (sync, compute-features, predict, backtest, verify)           |
 +-----------------------------------------------------------------------------------+
-         |                                |                               |
-         v                                v                               v
+          |                                |                               |
+          v                                v                               v
 +------------------+            +-------------------+           +-------------------+
-|  Crawler Engine  |            |  Feature Engine   |           | Prediction Engine |
-|  (500.com bulk   |            |  - AC value (|D|-5|           |  - Blue 3-Model   |
-|   & CWL API inc) |            |  - Sum, Span, Odd |           |    Ensemble       |
++  Crawler Engine  |            |  Feature Engine   |           | Prediction Engine |
+|  (500.com bulk   |            |  - AC value (|D|-5|           |  - Hazard + Markov|
+|   & CWL API inc) |            |  - Sum, Span, Odd |           |    + Momentum     |
 |  - Idempotent    |            |  - Prime, Zones   |           |  - Concentrated   |
 +------------------+            |  - Omission Snap  |           |    Break-Even     |
-         |                      |  - Cold/Warm/Hot  |           |  - Dan-Tuo Wheel  |
-         |                      +-------------------+           |  - Guardrails     |
-         |                                |                     +-------------------+
-         v                                v                               |
+          |                     |  - Cold/Warm/Hot  |           |  - Dan-Tuo Wheel  |
+          |                     +-------------------+           |  - Guardrails     |
+          |                               |                     +-------------------+
+          |                               |                                |
+          v                               v                                v
 +-------------------------------------------------------------------------+         |
-|                          Storage Layer (SQLite WAL)                     |         |
-|   - ssq_draw_history       - ssq_prediction_batches                     |<--------+
-|   - ssq_feature_metrics    - ssq_prediction_items                       |
-+-------------------------------------------------------------------------+
-                                          ^
-                                          |
-                               +---------------------+
-                               |   Backtest Engine   |
-                               |   - Chronological   |
-                               |     zero-lookahead  |
-                               |   - Levels 1-6 audit|
-                               |   - Comparative ROI |
+|                          Storage Layer (SQLite WAL)                     |         v
+|   - ssq_draw_history             - ssq_prediction_batches               |  +-------------------+
+|   - ssq_feature_metrics          - ssq_prediction_items                 |  | Adaptive Strategy |
+|   - ssq_adaptive_state           - ssq_adaptive_history                 |  | & Reflection Loop |
++-------------------------------------------------------------------------+  | - Deficit trigger |
+                                          ^                                  | - Weight shift    |
+                                          |                                  | - Blue 3+2 / 5-diff|
+                               +---------------------+                       | - Deviation log   |
+                               |   Backtest Engine   |                       +-------------------+
+                               |   - Chronological   |                                 |
+                               |     zero-lookahead  |                                 |
+                               |   - Levels 1-6 audit|                                 |
+                               |   - CollisionCache  |<--------------------------------+
+                               |     (Sub-10ms)      |
                                +---------------------+
 ```
 
@@ -64,8 +76,24 @@ SSQ-Quant-System is a discrete sequence quantitative analysis and prediction pla
 | 15 | Environment & Setup Guide | `ENVIRONMENT_SETUP.md` covering direct `D:\Miniconda3` execution and fresh virtualenv setup with `requirements.txt` | M5 | ORIGINAL_REQUEST §R5, survey |
 | 16 | Modular Documentation in docs/ | Technical documentation covering Architecture, Data Schema, Feature Engineering, Prediction Strategies, and Backtesting | M5 | ORIGINAL_REQUEST §R5 |
 | 17 | Git Conventional Commits | Enforcing Conventional Commits across git history for all milestones | M5 | ORIGINAL_REQUEST §R5 |
-| 18 | E2E Test Suite (Tiers 1-4) | Comprehensive opaque-box test suite verifying all features via CLI and API | E2E Track | ORIGINAL_REQUEST §Acceptance Criteria |
+| 18 | E2E Test Suite (Tiers 1-4) | Comprehensive opaque-box test suite verifying all features via CLI and API (161 tests) | E2E Track | ORIGINAL_REQUEST §Acceptance Criteria |
 | 19 | Adversarial Coverage Hardening (Tier 5) | White-box stress testing, corner cases, data corruption resilience, and adversarial challenger verification | Final M | Orchestrator Guidelines |
+| 20 | FastAPI Application & CORS Setup | `backend/app/main.py` with lifespan DB init, CORS middleware, API v1 routing | M6 | ORIGINAL_REQUEST §R1 |
+| 21 | Pydantic V2 Schemas | `backend/app/schemas.py` defining all requests, responses, pagination, trends, sandboxes | M6 | ORIGINAL_REQUEST §R1 |
+| 22 | History & Trend API Router | `backend/app/api/history.py`: draws pagination, feature metrics, omission matrix heatmap, sync trigger | M6 | ORIGINAL_REQUEST §R1 |
+| 23 | Prediction Generation API Router | `backend/app/api/predict.py`: pure local offline quant 5-line prediction, persistence, batch archive | M6 | ORIGINAL_REQUEST §R1 |
+| 24 | Sandbox Collision & Verification API | `backend/app/api/backtest.py`: sub-10ms collision against 3519 draws via `CollisionCache`, verification, backtest | M6 | ORIGINAL_REQUEST §R1 |
+| 25 | Adaptive Strategy State & Trajectory Models | `backend/app/models.py`: additive `AdaptiveState` (`ssq_adaptive_state`) and `AdaptiveHistory` (`ssq_adaptive_history`) | M6 | ORIGINAL_REQUEST §R2 |
+| 26 | Adaptive Strategy Feedback Engine | `backend/app/services/adaptive_service.py`: streak trigger ($K_t \ge 3$), dynamic hot/cold weight shifts, blue 3+2 vs 5-diff mode switching, deviation metrics logging, saturation clamps | M6 | ORIGINAL_REQUEST §R2 |
+| 27 | Adaptive Reflection API Router | `backend/app/api/adaptive.py`: adaptive status, trajectory events, manual trigger / reset | M6 | ORIGINAL_REQUEST §R2 |
+| 28 | Backend API & Adaptive Automated Pytest Suite | `tests/api/` & `tests/unit/test_adaptive_service.py`: 66 new tests, 387 total repo tests 100% green | M7 | ORIGINAL_REQUEST §R4 |
+| 29 | Frontend Scaffolding & Toolchain | `frontend/`: Vite 6 + Vue 3.5 + TypeScript + Element Plus (Dark) + Tailwind CSS + ECharts 5.6 | M8 | ORIGINAL_REQUEST §R3 |
+| 30 | View 1: History & Trend Dashboard | Omission heatmap chart, key mathematical indicators distribution, paginated draw history table | M8 | ORIGINAL_REQUEST §R3 |
+| 31 | View 2: AI Strategy Prediction Lab | Parameter configuration sliders, real-time simulation, candidate numbers generation, DB persistence | M8 | ORIGINAL_REQUEST §R3 |
+| 32 | View 3: Archive & Verification Review Center | Prediction timeline, win rate / payout summary, adaptive evolution status, glowing Neon Red (`#ff4757`) and Electric Blue (`#00d2d3`) hit cards | M8 | ORIGINAL_REQUEST §R3 |
+| 33 | View 4: Historical Collision Sandbox Tool | 6 red + 1 blue interactive picker, collision against 3500+ draws, highest prize level, quantile gauges | M8 | ORIGINAL_REQUEST §R3 |
+| 34 | Frontend Typecheck & Build Gates | `vue-tsc --noEmit` and `npm run build` passing with zero errors | M8 | ORIGINAL_REQUEST §R4 |
+| 35 | Full-Stack Integration, Docs & GitHub Sync | Modular documentation update in `docs/` & `README.md`, conventional commits, push to remote `main` branch | M9 | ORIGINAL_REQUEST §R5 |
 
 ## Milestones
 
@@ -73,11 +101,14 @@ SSQ-Quant-System is a discrete sequence quantitative analysis and prediction pla
 |---|------|-------|-------------|--------|
 | E2E | E2E Testing Suite Track | Opaque-box test harness, runner, and Tier 1-4 test cases; published `TEST_READY.md` (161 tests) | none | DONE |
 | M1 | Historical Data Layer & Synchronization Engine | R1: SQLite schema, 500.com bulk ingestion (3519 draws), CWL incremental sync, CLI sync command | none | DONE |
-| M2 | Multi-Dimensional Feature Engineering Engine | R2: AC value, sum, span, odd/even, primes, zones, omissions, cold/warm/hot tables, snapshot JSON | M1 | IN_PROGRESS |
-| M3 | 5-Line Strategy Prediction & Break-Even Dual-Engine | R3: Blue 3-model scoring ensemble, confidence-weighted break-even allocation (3-2, 2-2-1), Dan-Tuo wheeling, statistical guardrails, prediction persistence | M1, M2 | PLANNED |
-| M4 | Backtest & Prize Verification Engine | R4: Levels 1-6 prize auditor, zero-lookahead backtest harness (50, 100, 300 issues), comparative strategy evaluation | M1, M2, M3 | PLANNED |
-| M5 | Engineering Standards, Documentation & Git Commits | R5: `ENVIRONMENT_SETUP.md`, `requirements.txt`, modular docs in `docs/`, Conventional Commits audit | M4 | PLANNED |
-| Final | Full E2E Test Pass & Adversarial Hardening | Phase 1: 100% pass of E2E test suite (Tiers 1-4); Phase 2: Adversarial coverage hardening (Tier 5) | E2E, M1-M5 | PLANNED |
+| M2 | Multi-Dimensional Feature Engineering Engine | R2: AC value, sum, span, odd/even, primes, zones, omissions, cold/warm/hot tables, snapshot JSON | M1 | DONE |
+| M3 | 5-Line Strategy Prediction & Break-Even Dual-Engine | R3: Blue 3-model scoring ensemble, confidence-weighted break-even allocation (3-2, 2-2-1), Dan-Tuo wheeling, statistical guardrails, prediction persistence | M1, M2 | DONE |
+| M4 | Backtest & Prize Verification Engine | R4: Levels 1-6 prize auditor, zero-lookahead backtest harness (50, 100, 300 issues), comparative strategy evaluation | M1, M2, M3 | DONE |
+| M5 | Engineering Standards, Documentation & Git Commits | R5: `ENVIRONMENT_SETUP.md`, `requirements.txt`, modular docs in `docs/`, Conventional Commits audit | M4 | DONE |
+| M6 | Backend RESTful API & Adaptive Quant Service Layer | R1 & R2: FastAPI app, schemas, 4 API routers, adaptive models & engine, CollisionCache | M1-M5 | DONE |
+| M7 | Backend API & Adaptive Automated Pytest Suite | R4: Full test coverage in `tests/api/` & `tests/unit/test_adaptive_service.py`, 387 tests passing | M6 | DONE |
+| M8 | Frontend Dark Quant Terminal Application | R3 & R4: Vue 3 + TS + Vite + Element Plus Dark + Tailwind + ECharts 4 core views, `vue-tsc` & `npm run build` | M6, M7 | DONE |
+| M9 | Full-Stack Integration, Docs & GitHub Sync | R5: End-to-end integration verification, docs update, Git commit & push | M7, M8 | DONE |
 
 ## Interface Contracts
 
@@ -132,28 +163,65 @@ SSQ-Quant-System is a discrete sequence quantitative analysis and prediction pla
   - `hit_blue` BOOLEAN DEFAULT 0
   - `prize_level` INT DEFAULT 0, `prize_amount` BIGINT DEFAULT 0
 
-### 2. Python Service Interfaces
-- `CrawlerService`:
-  - `sync_all(force: bool = False) -> int`: downloads full history from 500.com and populates SQLite. Returns count of inserted draws.
-  - `sync_latest() -> int`: fetches latest issues from CWL JSON API with 500.com fallback. Returns count of new draws added.
-- `FeatureEngine`:
-  - `compute_metrics_for_draw(draw: DrawHistory, prev_draw: Optional[DrawHistory], prior_snapshot: Optional[dict]) -> FeatureMetrics`
-  - `compute_all_missing_features() -> int`
-- `PredictionService`:
-  - `generate_5_line_prediction(target_issue: str, strategy: str = "CONCENTRATED_BREAK_EVEN") -> PredictionBatch`
-- `VerificationService`:
-  - `verify_ticket(pred_reds: List[int], pred_blue: int, actual_reds: List[int], actual_blue: int, first_amount: int, second_amount: int) -> Tuple[int, int, List[int], bool]`
-  - `verify_batch(batch_id: int) -> PredictionBatch`
-- `BacktestEngine`:
-  - `run_backtest(n_issues: int, strategy: str) -> BacktestResult`
-  - `compare_strategies(n_issues: int) -> StrategyComparisonReport`
+- `ssq_adaptive_state`:
+  - `id` INTEGER PRIMARY KEY AUTOINCREMENT
+  - `consecutive_deficit_count` INT NOT NULL DEFAULT 0
+  - `current_blue_mode` VARCHAR(30) NOT NULL DEFAULT 'CONCENTRATED'
+  - `current_strategy_mode` VARCHAR(50) NOT NULL DEFAULT 'CONCENTRATED_BREAK_EVEN'
+  - `loss_threshold` INT NOT NULL DEFAULT 3
+  - `hot_momentum_weight` FLOAT NOT NULL DEFAULT 0.25
+  - `cold_reversion_weight` FLOAT NOT NULL DEFAULT 0.40
+  - `markov_weight` FLOAT NOT NULL DEFAULT 0.35
+  - `temperature_tau` FLOAT NOT NULL DEFAULT 0.85
+  - `sum_bias` FLOAT NOT NULL DEFAULT 0.0 (clamped to [-30.0, +30.0])
+  - `odd_bias` FLOAT NOT NULL DEFAULT 0.0
+  - `ac_min_override` INT NOT NULL DEFAULT 6
+  - `sum_range_min` INT NOT NULL DEFAULT 75 (clamped to [65, 80])
+  - `sum_range_max` INT NOT NULL DEFAULT 135 (clamped to [115, 145])
+  - `last_trigger_issue` VARCHAR(20)
+  - `last_trigger_reason` TEXT
+  - `evolution_version` INT NOT NULL DEFAULT 1
+  - `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+- `ssq_adaptive_history`:
+  - `id` INTEGER PRIMARY KEY AUTOINCREMENT
+  - `trigger_issue` VARCHAR(20) NOT NULL
+  - `trigger_reason` VARCHAR(100) NOT NULL
+  - `streak_length` INT NOT NULL DEFAULT 0
+  - `pre_state_json` TEXT NOT NULL DEFAULT '{}'
+  - `post_state_json` TEXT NOT NULL DEFAULT '{}'
+  - `metrics_deviation_json` TEXT NOT NULL DEFAULT '{}'
+  - `reflection_notes` TEXT
+  - `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+### 2. FastAPI Endpoints
+- `GET /api/v1/history/draws` -> Paginated historical draws (alias `/list`)
+- `GET /api/v1/history/latest` -> Latest official draw record
+- `GET /api/v1/history/metrics` -> Feature metrics sequence (`limit=100`)
+- `GET /api/v1/history/metrics/{issue_no}` -> Draw metrics by issue
+- `GET /api/v1/history/omissions` -> Red & Blue omission matrices & cold/warm/hot tables (`limit=30`, alias `/trends`)
+- `GET /api/v1/history/distributions` -> Feature frequency histograms (`limit=100`)
+- `POST /api/v1/history/sync` -> Incremental/full crawl sync, cache invalidation, auto-verify
+- `POST /api/v1/predict/generate` -> 5-line local prediction with parameters & offline candidate pool (<100ms)
+- `POST /api/v1/predict/save` -> Persist 5-note prediction batch & items
+- `GET /api/v1/predict/batches` -> List prediction batches with status filter
+- `GET /api/v1/predict/batches/{id}` -> Prediction batch details with item highlights
+- `GET /api/v1/predict/dashboard` -> Aggregate win rate, ROI, payout statistics (alias `/summary`)
+- `POST /api/v1/backtest/sandbox/collision` -> Sandbox collision for user ticket (sub-10ms via `CollisionCache`, alias `/sandbox`)
+- `POST /api/v1/backtest/verify/{issue_no}` -> Audit prediction against actual draw & trigger adaptive feedback
+- `POST /api/v1/backtest/run` -> Run point-in-time sliding-window backtest
+- `POST /api/v1/backtest/compare` -> Comparative backtest between Concentrated and Dispersed strategies
+- `GET /api/v1/adaptive/status` -> Current adaptive hyperparameters & state (alias `/state`)
+- `GET /api/v1/adaptive/trajectory` -> Immutable adaptive history audit log
+- `POST /api/v1/adaptive/trigger` -> Manual / threshold-based adaptive reflection trigger
+- `POST /api/v1/adaptive/reset` -> Reset adaptive weights to canonical baseline (0.40, 0.35, 0.25)
 
 ### 3. CLI Command Specifications
 - `python -m backend.app.cli sync [--force]` -> Full or incremental synchronization
 - `python -m backend.app.cli compute-features` -> Compute all feature metrics and omission snapshots
-- `python -m backend.app.cli predict --issue <issue_no> [--strategy CONCENTRATED_BREAK_EVEN|DISPERSED_BASELINE]` -> Generate and store 5-line prediction
-- `python -m backend.app.cli verify --issue <issue_no>` -> Audit predictions against actual draw
-- `python -m backend.app.cli backtest --issues <50|100|300> [--compare]` -> Run point-in-time backtest and output comparative report
+- `python -m backend.app.cli predict-issue [--issue <issue_no>] [--strategy break_even|dispersed]` -> Generate and store 5-line prediction
+- `python -m backend.app.cli verify [--issue <issue_no>] [--batch-id <id>]` -> Audit predictions against actual draw
+- `python -m backend.app.cli backtest [--issues <50|100|300>] [--compare]` -> Run point-in-time backtest and output comparative report
 
 ## Code Layout
 
@@ -162,18 +230,18 @@ d:\sy\lottery\
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py                     # FastAPI entry point
+│   │   ├── main.py                     # FastAPI entry point & lifespan setup
 │   │   ├── cli.py                      # CLI commands entry point
 │   │   ├── config.py                   # Paths, DB URL, constants
 │   │   ├── database.py                 # SQLite connection, WAL mode, session maker
-│   │   ├── models.py                   # SQLAlchemy 2.0 ORM models (4 core tables)
-│   │   ├── schemas.py                  # Pydantic schemas for requests/responses
+│   │   ├── models.py                   # SQLAlchemy 2.0 ORM models (6 tables)
+│   │   ├── schemas.py                  # Pydantic v2 schemas for requests/responses
 │   │   ├── api/
 │   │   │   ├── __init__.py
-│   │   │   ├── history.py              # Draw history and sync endpoints
-│   │   │   ├── features.py             # Feature metrics, omission and cold/hot endpoints
-│   │   │   ├── predict.py              # Prediction generation and batch archive endpoints
-│   │   │   └── backtest.py             # Backtest and strategy comparison endpoints
+│   │   │   ├── history.py              # Draw history, omissions & sync endpoints
+│   │   │   ├── predict.py              # Prediction generation & batch archive endpoints
+│   │   │   ├── backtest.py             # Sandbox collision, verification & backtest
+│   │   │   └── adaptive.py             # Adaptive strategy state & trajectory endpoints
 │   │   └── services/
 │   │       ├── __init__.py
 │   │       ├── crawler.py              # 500.com bulk + CWL incremental crawler
@@ -182,30 +250,63 @@ d:\sy\lottery\
 │   │       ├── wheeling_engine.py      # Dan-Tuo combinatorial wheel & statistical guardrails
 │   │       ├── predictor.py            # 5-line break-even allocation & batch persistence
 │   │       ├── verifier.py             # Official Level 1-6 prize auditing engine
-│   │       └── backtest_runner.py      # Point-in-time sliding-window backtest simulator
+│   │       ├── backtest_runner.py      # Point-in-time sliding-window backtest simulator
+│   │       ├── collision_cache.py      # Thread-safe in-memory cache for sub-10ms collision
+│   │       └── adaptive_service.py     # Adaptive evolution loop & feedback engine
 │   └── requirements.txt
 ├── data/
 │   └── ssq_quant.db                    # SQLite database file (WAL mode)
 ├── docs/
-│   ├── 01_architecture.md              # System architecture & data flow
-│   ├── 02_data_schema.md               # Complete schema DDL & indexes
+│   ├── 01_database_schema.md           # Complete schema DDL & indexes
+│   ├── 02_crawler_service.md           # Crawler architecture & sync protocols
 │   ├── 03_feature_engineering.md       # AC value, omission, cold/hot formulas
-│   ├── 04_prediction_strategies.md     # Blue break-even proof & Dan-Tuo wheeling
-│   └── 05_backtest_reports.md          # Backtest methodology & comparative results
+│   ├── 04_git_commit_standard.md       # Conventional Commits guideline
+│   ├── 04_prediction_strategy.md       # Blue break-even proof & Dan-Tuo wheeling
+│   ├── 05_backtest_report.md           # Backtest methodology & comparative results
+│   ├── 06_fastapi_restful_api.md       # OpenAPI specs & CollisionCache architecture
+│   ├── 07_adaptive_strategy_loop.md    # Adaptive evolution math & feedback algorithms
+│   └── 08_frontend_quant_terminal.md   # Vue 3 Dark Quant Terminal guide & styles
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.ts                  # Vite 6 config with /api proxy to :8000
+│   ├── tsconfig.json
+│   ├── tailwind.config.js              # Dark terminal color palette
+│   ├── index.html
+│   └── src/
+│       ├── main.ts                     # Vue app initialization
+│       ├── App.vue                     # Root layout shell
+│       ├── style.css                   # Custom neon glow lottery ball styles
+│       ├── router/                     # 4 core routes (/history, /predict, /archive, /sandbox)
+│       ├── components/
+│       │   ├── layout/                 # SidebarNav.vue, TopHeader.vue
+│       │   └── charts/                 # OmissionHeatmap.vue, IndicatorChart.vue
+│       └── views/
+│           ├── HistoryView.vue         # View 1: History & Trend Dashboard
+│           ├── PredictLabView.vue      # View 2: AI Strategy Prediction Lab
+│           ├── ArchiveReviewView.vue   # View 3: Archive & Verification Review Center
+│           └── SandboxView.vue         # View 4: Historical Collision Sandbox
 ├── tests/
 │   ├── __init__.py
-│   ├── e2e/
-│   │   ├── test_e2e_tier1_features.py  # Tier 1: Feature Coverage (>=5 per feature)
-│   │   ├── test_e2e_tier2_boundaries.py# Tier 2: Boundary & Corner Cases (>=5 per feature)
-│   │   ├── test_e2e_tier3_combinations.py # Tier 3: Cross-Feature Interactions
-│   │   └── test_e2e_tier4_workloads.py # Tier 4: Real-World Workload Scenarios
-│   └── unit/
-│       ├── test_crawler.py
-│       ├── test_features.py
-│       ├── test_quant_models.py
-│       ├── test_wheeling.py
-│       ├── test_verifier.py
-│       └── test_backtest.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── test_api_history.py         # History & sync endpoint tests (20 tests)
+│   │   ├── test_api_predict.py         # Predict & archive endpoint tests (15 tests)
+│   │   ├── test_api_backtest_sandbox.py# Sandbox collision & backtest tests (11 tests)
+│   │   └── test_api_adaptive.py        # Adaptive state & trajectory tests (8 tests)
+│   ├── unit/
+│   │   ├── test_crawler.py
+│   │   ├── test_features.py
+│   │   ├── test_verifier.py
+│   │   ├── test_backtest.py
+│   │   ├── test_adaptive_service.py    # Adaptive feedback unit tests (12 tests)
+│   │   ├── test_adversarial_m1.py
+│   │   ├── test_adversarial_m2.py
+│   │   └── test_challenger_m2.py
+│   └── e2e/
+│       ├── test_e2e_tier1_features.py
+│       ├── test_e2e_tier2_boundaries.py
+│       ├── test_e2e_tier3_combinations.py
+│       └── test_e2e_tier4_workloads.py
 ├── ENVIRONMENT_SETUP.md                # Python/Miniconda setup documentation
 ├── PROJECT.md                          # Master project specification
 ├── TEST_INFRA.md                       # E2E Test Suite design document

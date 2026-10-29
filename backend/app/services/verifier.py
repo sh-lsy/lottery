@@ -224,6 +224,14 @@ class VerificationService:
         batch.verified_at = datetime.now()
         batch.post_reflection_md = self.generate_post_reflection(batch, draw)
 
+        # Hook into Adaptive Strategy Feedback Loop
+        try:
+            from backend.app.services.adaptive_service import AdaptiveService
+            adaptive_service = AdaptiveService()
+            adaptive_service.process_batch_verification(batch, draw, session)
+        except Exception:
+            pass
+
         return batch
 
     def verify_issue(
