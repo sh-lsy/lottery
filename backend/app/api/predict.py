@@ -211,7 +211,7 @@ def generate_prediction(
                 (tuple(sorted([it.red_1, it.red_2, it.red_3, it.red_4, it.red_5, it.red_6])), it.blue_1)
                 for it in eb_items
             ]
-            if eb_lines == incoming_lines:
+            if sorted(eb_lines) == sorted(incoming_lines):
                 found_batch = eb
                 break
 
@@ -288,7 +288,7 @@ def save_prediction_batch(
             (tuple(sorted([it.red_1, it.red_2, it.red_3, it.red_4, it.red_5, it.red_6])), it.blue_1)
             for it in eb_items
         ]
-        if eb_lines == incoming_lines:
+        if sorted(eb_lines) == sorted(incoming_lines):
             return PredictionSaveResponse(
                 batch_id=eb.id,
                 target_issue=eb.target_issue,
@@ -530,3 +530,60 @@ def get_prediction_dashboard(db: Session = Depends(get_db)):
         prize_distribution=prize_dist,
         strategy_breakdown=strategy_breakdown,
     )
+
+
+@router.delete("/batches/{batch_id}", summary="Delete prediction batch and associated items")
+def delete_prediction_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+):
+    batch = db.scalar(select(PredictionBatch).filter(PredictionBatch.id == batch_id))
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Prediction batch {batch_id} not found",
+        )
+    db.query(PredictionItem).filter(PredictionItem.batch_id == batch_id).delete()
+    db.delete(batch)
+    db.commit()
+    return {
+        "success": True,
+        "message": f"批次 #{batch_id} 及其关联注单已成功删除",
+        "deleted_id": batch_id,
+    }
+
+
+@router.post("/batches/deduplicate", summary="Clean up duplicate identical prediction batches")
+def deduplicate_prediction_batches(
+    db: Session = Depends(get_db),
+):
+    batches = db.scalars(select(PredictionBatch).order_by(PredictionBatch.id.asc())).all()
+    seen = {}
+    deleted_ids = []
+
+    for b in batches:
+        items = db.scalars(
+            select(PredictionItem).where(PredictionItem.batch_id == b.id).order_by(PredictionItem.note_index.asc())
+        ).all()
+        lines_signature = tuple(sorted([
+            (tuple(sorted([it.red_1, it.red_2, it.red_3, it.red_4, it.red_5, it.red_6])), it.blue_1)
+            for it in items
+        ]))
+        key = (b.target_issue, lines_signature)
+        if key in seen:
+            deleted_ids.append(b.id)
+            db.query(PredictionItem).filter(PredictionItem.batch_id == b.id).delete()
+            db.delete(b)
+        else:
+            seen[key] = b.id
+
+    if deleted_ids:
+        db.commit()
+
+    return {
+        "success": True,
+        "deleted_count": len(deleted_ids),
+        "deleted_ids": deleted_ids,
+        "retained_count": len(seen),
+        "message": f"去重扫描完成：保留 {len(seen)} 个独立预测方案，清理 {len(deleted_ids)} 个完全一致的重复批次",
+    }

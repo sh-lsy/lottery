@@ -37,3 +37,17 @@ export function getPredictionBatch(batchId: number): Promise<PredictionBatchDeta
 export function getPredictDashboard(): Promise<PredictDashboardResponse> {
   return client.get('/predict/dashboard');
 }
+
+export function deletePredictionBatch(batchId: number): Promise<{ success: boolean; message: string; deleted_id: number }> {
+  return client.delete(`/predict/batches/${batchId}`);
+}
+
+export function deduplicatePredictionBatches(): Promise<{
+  success: boolean;
+  deleted_count: number;
+  deleted_ids: number[];
+  retained_count: number;
+  message: string;
+}> {
+  return client.post('/predict/batches/deduplicate');
+}

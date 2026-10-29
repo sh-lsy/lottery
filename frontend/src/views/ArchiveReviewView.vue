@@ -5,6 +5,8 @@ import {
   listPredictionBatches,
   getPredictionBatch,
   getPredictDashboard,
+  deletePredictionBatch,
+  deduplicatePredictionBatches,
 } from '../api/predict';
 import { verifyIssue } from '../api/backtest';
 import { getAdaptiveStatus } from '../api/adaptive';
@@ -24,6 +26,8 @@ const systemStore = useSystemStore();
 // States
 const loading = ref(false);
 const verifying = ref(false);
+const deleting = ref(false);
+const deduplicating = ref(false);
 const dashboard = ref<PredictDashboardResponse | null>(null);
 const adaptiveState = ref<AdaptiveStateResponse | null>(null);
 const batches = ref<PredictionBatchSummary[]>([]);
@@ -66,14 +70,51 @@ async function loadBatches() {
     batches.value = res.items;
     totalBatches.value = res.total;
 
-    // Auto select first batch if none selected
-    if (batches.value.length > 0 && !selectedBatchDetail.value) {
-      selectBatch(batches.value[0].id);
+    // Auto select first batch if none selected or current selected is not in items
+    if (batches.value.length > 0) {
+      const exists = batches.value.some((b) => b.id === selectedBatchDetail.value?.id);
+      if (!selectedBatchDetail.value || !exists) {
+        selectBatch(batches.value[0].id);
+      }
+    } else {
+      selectedBatchDetail.value = null;
     }
   } catch (e) {
     console.error('Failed to list batches', e);
   } finally {
     loading.value = false;
+  }
+}
+
+async function handleRefresh() {
+  await Promise.all([loadDashboard(), loadAdaptive(), loadBatches()]);
+  ElMessage.success('档案与统计数据已刷新');
+}
+
+async function handleDeduplicate() {
+  deduplicating.value = true;
+  try {
+    const res = await deduplicatePredictionBatches();
+    ElMessage.success(res.message);
+    await handleRefresh();
+  } catch {
+    ElMessage.error('去重清理失败');
+  } finally {
+    deduplicating.value = false;
+  }
+}
+
+async function handleDeleteBatch(batchId: number) {
+  deleting.value = true;
+  try {
+    const res = await deletePredictionBatch(batchId);
+    ElMessage.success(res.message);
+    selectedBatchDetail.value = null;
+    await Promise.all([loadDashboard(), loadBatches()]);
+  } catch {
+    ElMessage.error(`删除批次 #${batchId} 失败`);
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -167,33 +208,61 @@ onMounted(() => {
 
     <!-- Main Review Layout -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <!-- Left: Batch Timeline List (4 cols) -->
+      <!-- Left: Batch Timeline List (5 cols) -->
       <div class="lg:col-span-5 space-y-4">
         <QuantCard title="历史预测批次档案 (Prediction Batches)">
           <template #action>
-            <!-- Filter Tabs -->
-            <div class="bg-[#111827] p-0.5 rounded-lg border border-[#334155] flex text-xs font-mono">
-              <button
-                @click="verifyFilter = 'ALL'; currentPage = 1; loadBatches()"
-                class="px-2 py-1 rounded transition-all"
-                :class="verifyFilter === 'ALL' ? 'bg-[#00d2d3] text-[#0b0f19] font-bold' : 'text-[#94a3b8]'"
+            <div class="flex items-center space-x-2">
+              <!-- Filter Tabs -->
+              <div class="bg-[#111827] p-0.5 rounded-lg border border-[#334155] flex text-xs font-mono">
+                <button
+                  @click="verifyFilter = 'ALL'; currentPage = 1; loadBatches()"
+                  class="px-2 py-1 rounded transition-all"
+                  :class="verifyFilter === 'ALL' ? 'bg-[#00d2d3] text-[#0b0f19] font-bold' : 'text-[#94a3b8]'"
+                >
+                  全部
+                </button>
+                <button
+                  @click="verifyFilter = 'PENDING'; currentPage = 1; loadBatches()"
+                  class="px-2 py-1 rounded transition-all"
+                  :class="verifyFilter === 'PENDING' ? 'bg-[#f59e0b] text-[#0b0f19] font-bold' : 'text-[#94a3b8]'"
+                >
+                  待开奖
+                </button>
+                <button
+                  @click="verifyFilter = 'VERIFIED'; currentPage = 1; loadBatches()"
+                  class="px-2 py-1 rounded transition-all"
+                  :class="verifyFilter === 'VERIFIED' ? 'bg-[#10b981] text-[#0b0f19] font-bold' : 'text-[#94a3b8]'"
+                >
+                  已核验
+                </button>
+              </div>
+
+              <!-- Refresh Button -->
+              <el-button
+                size="small"
+                type="info"
+                plain
+                :loading="loading"
+                @click="handleRefresh"
+                class="!font-bold !text-xs !px-2.5"
+                title="重新载入最新预测批次档案"
               >
-                全部
-              </button>
-              <button
-                @click="verifyFilter = 'PENDING'; currentPage = 1; loadBatches()"
-                class="px-2 py-1 rounded transition-all"
-                :class="verifyFilter === 'PENDING' ? 'bg-[#f59e0b] text-[#0b0f19] font-bold' : 'text-[#94a3b8]'"
+                🔄 刷新
+              </el-button>
+
+              <!-- Deduplicate Button -->
+              <el-button
+                size="small"
+                type="warning"
+                plain
+                :loading="deduplicating"
+                @click="handleDeduplicate"
+                class="!font-bold !text-xs !px-2.5"
+                title="扫描并清理一模一样的重复预测方案，保留每组唯一一份"
               >
-                待开奖
-              </button>
-              <button
-                @click="verifyFilter = 'VERIFIED'; currentPage = 1; loadBatches()"
-                class="px-2 py-1 rounded transition-all"
-                :class="verifyFilter === 'VERIFIED' ? 'bg-[#10b981] text-[#0b0f19] font-bold' : 'text-[#94a3b8]'"
-              >
-                已核验
-              </button>
+                🧹 一键去重
+              </el-button>
             </div>
           </template>
 
@@ -269,16 +338,38 @@ onMounted(() => {
           :title="`批次 #${selectedBatchDetail.id} - 目标开奖期号: ${selectedBatchDetail.target_issue}`"
         >
           <template #action>
-            <el-button
-              v-if="selectedBatchDetail.verify_status === 'PENDING'"
-              type="primary"
-              size="small"
-              :loading="verifying"
-              @click="handleVerify(selectedBatchDetail.target_issue)"
-              class="!bg-[#00d2d3] !border-[#00d2d3] !text-[#0b0f19] !font-bold"
-            >
-              ⚡ 立即核奖比对
-            </el-button>
+            <div class="flex items-center space-x-2">
+              <el-button
+                v-if="selectedBatchDetail.verify_status === 'PENDING'"
+                type="primary"
+                size="small"
+                :loading="verifying"
+                @click="handleVerify(selectedBatchDetail.target_issue)"
+                class="!bg-[#00d2d3] !border-[#00d2d3] !text-[#0b0f19] !font-bold"
+              >
+                ⚡ 立即核奖比对
+              </el-button>
+
+              <el-popconfirm
+                :title="`确认删除批次 #${selectedBatchDetail.id}（目标 ${selectedBatchDetail.target_issue} 期）及其 5 注记录？`"
+                confirm-button-text="确定删除"
+                cancel-button-text="取消"
+                confirm-button-type="danger"
+                @confirm="handleDeleteBatch(selectedBatchDetail.id)"
+              >
+                <template #reference>
+                  <el-button
+                    type="danger"
+                    size="small"
+                    plain
+                    :loading="deleting"
+                    class="!font-bold"
+                  >
+                    🗑️ 删除批次
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </div>
           </template>
 
           <div class="space-y-4 font-mono">

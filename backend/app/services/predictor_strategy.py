@@ -208,7 +208,7 @@ class PredictionService:
                         (tuple(sorted([it.red_1, it.red_2, it.red_3, it.red_4, it.red_5, it.red_6])), it.blue_1)
                         for it in eb_items
                     ]
-                    if eb_lines == incoming_lines:
+                    if sorted(eb_lines) == sorted(incoming_lines):
                         found_batch = eb
                         break
 
