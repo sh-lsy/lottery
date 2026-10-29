@@ -158,7 +158,14 @@ class PredictionService:
             # 6. Red Dan-Tuo Combinatorial Wheeling with Guardrails
             red_engine = RedWheelingEngine(history_reds)
             cores, satellites = red_engine.select_candidate_pool()
-            red_lines = red_engine.generate_5_lines()
+            cf = {
+                "sum_min": sum_min,
+                "sum_max": sum_max,
+                "ac_min": ac_min,
+            }
+            if custom_filters:
+                cf.update(custom_filters)
+            red_lines = red_engine.generate_5_lines(custom_filters=cf)
 
             # 7. Structured Rationale and Filter Metadata
             top1_b, top2_b = ranked_blues[0], ranked_blues[1]

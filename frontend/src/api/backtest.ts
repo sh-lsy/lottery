@@ -6,5 +6,5 @@ export function collideSandbox(request: SandboxCollisionRequest): Promise<Sandbo
 }
 
 export function verifyIssue(issueNo: string, force: boolean = false): Promise<any> {
-  return client.post(`/backtest/verify/${issueNo}`, null, { params: { force } });
+  return client.post(`/backtest/verify/${issueNo}`, { force }, { params: { force } });
 }

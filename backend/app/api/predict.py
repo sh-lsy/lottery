@@ -114,7 +114,15 @@ def generate_prediction(
     # 5. Red Dan-Tuo Candidate Pool & Wheeling
     red_engine = RedWheelingEngine(history_reds)
     cores, satellites = red_engine.select_candidate_pool()
-    red_lines = red_engine.generate_5_lines()
+    custom_filters = {
+        "sum_min": sum_min,
+        "sum_max": sum_max,
+        "ac_min": ac_min,
+        "odd_counts": request.odd_counts,
+        "span_min": request.span_min,
+        "span_max": request.span_max,
+    }
+    red_lines = red_engine.generate_5_lines(custom_filters=custom_filters)
 
     # 6. Build Notes and Per-Line Features
     notes: List[PredictionNoteItem] = []

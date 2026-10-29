@@ -40,12 +40,14 @@ class StatisticalFilters:
     def is_valid_line(
         reds: List[int],
         prior_reds: Optional[List[int]] = None,
+        custom_filters: Optional[dict] = None,
     ) -> Tuple[bool, str]:
         """
         Validates a candidate 6-red combination against all 6 quantitative guardrails.
 
         :param reds: List of red ball numbers.
         :param prior_reds: Optional list of red balls drawn in the immediate prior issue.
+        :param custom_filters: Optional custom filters dict with sum_min, sum_max, ac_min, etc.
         :return: (is_valid: bool, reason: str). Returns (True, "PASSED") if all guardrails pass.
         """
         if len(reds) != 6:
@@ -56,20 +58,28 @@ class StatisticalFilters:
             return False, "OUT_OF_BOUNDS_1_33"
 
         sorted_reds = sorted(reds)
+        cf = custom_filters or {}
+        ac_min = cf.get("ac_min", 6) if cf.get("ac_min") is not None else 6
+        sum_min = cf.get("sum_min", 75) if cf.get("sum_min") is not None else 75
+        sum_max = cf.get("sum_max", 135) if cf.get("sum_max") is not None else 135
+        span_min = cf.get("span_min", 18) if cf.get("span_min") is not None else 18
+        span_max = cf.get("span_max", 30) if cf.get("span_max") is not None else 30
+        odd_allowed = tuple(cf.get("odd_counts", (2, 3, 4))) if cf.get("odd_counts") else (2, 3, 4)
+        max_repeats = cf.get("max_repeats", 2) if cf.get("max_repeats") is not None else 2
 
-        # 1. AC Value >= 6
+        # 1. AC Value >= ac_min
         ac = StatisticalFilters.calculate_ac(sorted_reds)
-        if ac < 6:
-            return False, f"AC_VALUE_BELOW_6 (got {ac})"
+        if ac < ac_min:
+            return False, f"AC_VALUE_BELOW_{ac_min} (got {ac})"
 
-        # 2. Red Sum in [75, 135]
+        # 2. Red Sum in [sum_min, sum_max]
         s = sum(sorted_reds)
-        if s < 75 or s > 135:
+        if s < sum_min or s > sum_max:
             return False, f"SUM_OUT_OF_BOUNDS_{s}"
 
-        # 3. Odd-Even Ratio in {2:4, 3:3, 4:2}
+        # 3. Odd-Even Ratio
         odd_count = sum(1 for x in sorted_reds if x % 2 == 1)
-        if odd_count not in (2, 3, 4):
+        if odd_count not in odd_allowed:
             return False, f"ODD_EVEN_UNBALANCED_{odd_count}"
 
         # 4. Consecutive Groups <= 2, Max run <= 3
@@ -85,15 +95,15 @@ class StatisticalFilters:
         if consec_pairs > 2 or max_run > 3:
             return False, f"EXCESSIVE_CONSECUTIVE_NUMBERS (pairs={consec_pairs}, max_run={max_run})"
 
-        # 5. Span in [18, 30]
+        # 5. Span in [span_min, span_max]
         span = sorted_reds[-1] - sorted_reds[0]
-        if span < 18 or span > 30:
+        if span < span_min or span > span_max:
             return False, f"SPAN_OUT_OF_BOUNDS_{span}"
 
-        # 6. Prior Draw Repeat Count in [0, 2]
+        # 6. Prior Draw Repeat Count
         if prior_reds:
             repeat_cnt = len(set(sorted_reds) & set(prior_reds))
-            if repeat_cnt > 2:
+            if repeat_cnt > max_repeats:
                 return False, f"EXCESSIVE_PRIOR_REPEATS_{repeat_cnt}"
 
         return True, "PASSED"
@@ -202,7 +212,7 @@ class RedWheelingEngine:
         satellites.sort()
         return cores, satellites
 
-    def generate_5_lines(self) -> List[List[int]]:
+    def generate_5_lines(self, custom_filters: Optional[dict] = None) -> List[List[int]]:
         """
         Generates 5 lines using Dan-Tuo Wheel Covering Matrix with Statistical Guardrails validation.
         Guarantees:
@@ -218,7 +228,7 @@ class RedWheelingEngine:
         valid_lines: List[List[int]] = []
         for alt_comb in itertools.combinations(satellites, 4):
             cand = sorted(cores + list(alt_comb))
-            v, _ = StatisticalFilters.is_valid_line(cand, prior_reds)
+            v, _ = StatisticalFilters.is_valid_line(cand, prior_reds, custom_filters=custom_filters)
             if v:
                 valid_lines.append(cand)
 
@@ -271,7 +281,7 @@ class RedWheelingEngine:
         lines: List[List[int]] = []
         for pat in patterns:
             candidate_line = sorted(cores + [satellites[i] for i in pat])
-            is_valid, _ = StatisticalFilters.is_valid_line(candidate_line, prior_reds)
+            is_valid, _ = StatisticalFilters.is_valid_line(candidate_line, prior_reds, custom_filters=custom_filters)
             overlap_ok = all(len(set(candidate_line) & set(l)) >= 3 for l in lines)
 
             if not (is_valid and overlap_ok and candidate_line not in lines):
@@ -279,7 +289,7 @@ class RedWheelingEngine:
                     cand = sorted(cores + list(alt_comb))
                     if cand in lines:
                         continue
-                    v, _ = StatisticalFilters.is_valid_line(cand, prior_reds)
+                    v, _ = StatisticalFilters.is_valid_line(cand, prior_reds, custom_filters=custom_filters)
                     if v and all(3 <= len(set(cand) & set(l)) <= 4 for l in lines):
                         candidate_line = cand
                         break

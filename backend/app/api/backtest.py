@@ -11,7 +11,7 @@ Backtest & Historical Collision Sandbox API Router:
 import json
 from typing import Any, Dict, List, Optional
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
@@ -232,9 +232,11 @@ def collide_sandbox_ticket(
 @router.post("/verify/{issue_no}", response_model=VerifyIssueResponse, summary="Audit prediction batches against authentic draw")
 def verify_issue_predictions(
     issue_no: str,
-    request: VerifyIssueRequest = VerifyIssueRequest(),
+    request: Optional[VerifyIssueRequest] = Body(None),
+    force: Optional[bool] = Query(None, description="Force re-verification"),
     db: Session = Depends(get_db),
 ):
+    is_force = force if force is not None else (request.force if request is not None else False)
     draw = db.scalar(select(DrawHistory).filter(DrawHistory.issue_no == issue_no))
     if not draw:
         raise HTTPException(
@@ -244,7 +246,7 @@ def verify_issue_predictions(
 
     verifier = VerificationService()
     try:
-        verified_batches = verifier.verify_issue(issue_no=issue_no, session=db, force=request.force)
+        verified_batches = verifier.verify_issue(issue_no=issue_no, session=db, force=is_force)
         db.commit()
     except Exception as e:
         raise HTTPException(
