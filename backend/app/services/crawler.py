@@ -318,7 +318,7 @@ class CrawlerService:
             if owns_session:
                 session.close()
 
-    def sync_latest(self) -> int:
+    def sync_latest(self, force: bool = False) -> int:
         """
         Fetch latest issues from CWL JSON API with 500.com fallback.
         Returns count of new draws added to the database.
@@ -336,7 +336,7 @@ class CrawlerService:
                 logger.info("Local database is empty, performing full sync_all")
                 if owns_session:
                     session.close()
-                return self.sync_all(force=False)
+                return self.sync_all(force=force)
 
             logger.info("Local database latest issue: %s", max_issue)
 
@@ -360,7 +360,8 @@ class CrawlerService:
 
             # Insert new draws
             to_insert = [DrawHistory(**rec) for rec in new_records]
-            session.add_all(to_insert)
+            if to_insert:
+                session.add_all(to_insert)
             session.commit()
             logger.info("sync_latest added %d new draw records", len(to_insert))
             return len(to_insert)

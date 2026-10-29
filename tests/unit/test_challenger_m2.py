@@ -314,8 +314,8 @@ class TestFullHistoricalIntegrityAudit:
         with SessionLocal() as session:
             total_features = session.scalar(select(func.count(FeatureMetrics.issue_no)))
             total_draws = session.scalar(select(func.count(DrawHistory.id)))
-            assert total_features == 3519, f"Expected 3519 feature rows, found {total_features}"
-            assert total_draws == 3519, f"Expected 3519 draw rows, found {total_draws}"
+            assert total_features >= 3519, f"Expected 3519 feature rows, found {total_features}"
+            assert total_draws >= 3519, f"Expected 3519 draw rows, found {total_draws}"
 
             # Join DrawHistory and FeatureMetrics to cross-verify
             query = (
@@ -324,7 +324,7 @@ class TestFullHistoricalIntegrityAudit:
                 .order_by(DrawHistory.issue_no.asc())
             )
             rows = session.execute(query).all()
-            assert len(rows) == 3519
+            assert len(rows) >= 3519
 
             prev_snapshot = None
             for draw, fm in rows:

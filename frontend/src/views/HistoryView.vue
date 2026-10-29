@@ -105,6 +105,15 @@ function handlePageChange(val: number) {
   loadDraws();
 }
 
+function formatShortDate(d?: string) {
+  if (!d) return '';
+  const parts = String(d).split('-');
+  if (parts.length >= 3) {
+    return `${parts[1]}-${parts[2]}`;
+  }
+  return String(d);
+}
+
 function formatAmount(val: number): string {
   if (val >= 100000000) {
     return `¥${(val / 100000000).toFixed(2)} 亿`;
@@ -129,7 +138,7 @@ onMounted(() => {
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
       <MetricCard
         label="最新官方开奖期号"
-        :value="latestDraw?.issue_no || '2026122'"
+        :value="latestDraw ? `${latestDraw.issue_no} (${formatShortDate(latestDraw.draw_date)})` : '2026123'"
         :sub-value="latestDraw?.draw_date ? String(latestDraw.draw_date) : ''"
         color="cyan"
       />
