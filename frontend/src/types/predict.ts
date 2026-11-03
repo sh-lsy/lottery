@@ -51,6 +51,7 @@ export interface PredictionGenerateResponse {
   candidate_pool: CandidatePoolSummary;
   blue_probabilities?: BlueProbabilityItem[] | null;
   break_even_matrix?: Record<string, any> | null;
+  metaphysics_info?: Record<string, any> | null;
   batch_id?: number | null;
 }
 

@@ -33,11 +33,13 @@ def normalize_strategy_type(strategy: Optional[str]) -> str:
         return "STAT_FILTER"
     elif s in ("NEURAL_EVOLVE", "NEURAL", "AI", "NN", "SSQ_NEURAL"):
         return "NEURAL_EVOLVE"
+    elif s in ("YIJING_METAPHYSICS", "YIJING", "METAPHYSICS", "BAGUA", "BAGUA_METAPHYSICS", "WUXING"):
+        return "YIJING_METAPHYSICS"
     elif s in ("ML_PROB", "ML", "PROB", "AUTO"):
         return "ML_PROB"
     else:
         # Check if already a valid schema value
-        valid = {"CONCENTRATED_BREAK_EVEN", "DISPERSED_BASELINE", "STAT_FILTER", "ML_PROB", "NEURAL_EVOLVE"}
+        valid = {"CONCENTRATED_BREAK_EVEN", "DISPERSED_BASELINE", "STAT_FILTER", "ML_PROB", "NEURAL_EVOLVE", "YIJING_METAPHYSICS"}
         if s in valid:
             return s
         raise ValueError(f"Unknown strategy: '{strategy}'. Valid choices are: {sorted(list(valid))}")
@@ -144,8 +146,9 @@ class PredictionService:
             neural_used = False
             red_probs = None
             blue_probs = None
+            meta_info = None
 
-            if canonical_strategy in ("NEURAL_EVOLVE", "ML_PROB"):
+            if canonical_strategy in ("NEURAL_EVOLVE", "ML_PROB", "YIJING_METAPHYSICS"):
                 try:
                     from backend.app.services.neural_model import SSQNeuralPredictor
                     import numpy as np
@@ -159,7 +162,24 @@ class PredictionService:
                 except Exception:
                     neural_used = False
 
-            if not neural_used:
+            if canonical_strategy == "YIJING_METAPHYSICS":
+                try:
+                    from backend.app.services.metaphysics_engine import MetaphysicsEngine
+                    import numpy as np
+                    latest_d = str(historical_draws[-1].draw_date) if historical_draws else "2026-11-03"
+                    m_r, m_b, meta_info = MetaphysicsEngine.compute_metaphysics_probabilities(latest_d, str(target_issue))
+                    if neural_used and red_probs is not None:
+                        # 70% Neural Net + 30% Zhouyi Bagua Metaphysics
+                        red_probs = 0.70 * red_probs + 0.30 * np.array(m_r)
+                        probs = 0.70 * probs + 0.30 * np.array(m_b)
+                    else:
+                        red_probs = np.array(m_r)
+                        probs = np.array(m_b)
+                    ranked_blues = (np.argsort(probs)[::-1] + 1).tolist()
+                except Exception:
+                    pass
+
+            if not neural_used and canonical_strategy != "YIJING_METAPHYSICS":
                 blue_engine = BlueScoringEngine(history_blues)
                 probs, ranked_blues = blue_engine.compute_ensemble_probabilities(weights=active_weights)
 
@@ -170,6 +190,7 @@ class PredictionService:
                 "STAT_FILTER": "BALANCED",
                 "ML_PROB": "AUTO",
                 "NEURAL_EVOLVE": "AUTO",
+                "YIJING_METAPHYSICS": "AUTO",
             }
             if custom_blue_mode:
                 alloc_mode = custom_blue_mode
@@ -206,11 +227,25 @@ class PredictionService:
             # 7. Structured Rationale and Filter Metadata
             top1_b, top2_b = ranked_blues[0], ranked_blues[1]
             p1, p2 = float(probs[top1_b - 1]), float(probs[top2_b - 1])
-            model_label = "SSQ-NeuralNet-Compact-2.8MB" if neural_used else "Ensemble-Hazard-Markov-Momentum"
+
+            if canonical_strategy == "YIJING_METAPHYSICS":
+                model_label = "Zhouyi-Bagua-Neural-Dual-Track"
+            elif neural_used:
+                model_label = "SSQ-NeuralNet-Compact-0.96MB"
+            else:
+                model_label = "Ensemble-Hazard-Markov-Momentum"
+
+            metaphysics_block = ""
+            if meta_info:
+                metaphysics_block = (
+                    f"- **周易八卦象数**: 当期卦象【{meta_info.get('hexagram_name', '乾为天')}】| {meta_info.get('prophecy_text', '')}\n"
+                    f"- **天干地支五行**: 开奖日柱【{meta_info.get('day_ganzhi', '')}】(日主属{meta_info.get('day_master_element', '')}，支属{meta_info.get('zhi_element', '')})，开奖亥时(水旺生木)\n"
+                )
 
             ai_reasoning = (
                 f"### Target Issue {target_issue} Quantitative Prediction Rationale (Batch Offset: {batch_offset})\n"
                 f"- **Engine**: {model_label} | **Strategy**: {canonical_strategy} ({alloc_mode})\n"
+                f"{metaphysics_block}"
                 f"- **Blue Ball Allocation**: {allocated_blues} (Top 1: Blue {top1_b:02d} [{p1:.2%}], Top 2: Blue {top2_b:02d} [{p2:.2%}])\n"
                 f"- **Red Candidate Pool (13-Ball Zero-Core)**: {candidate_pool}\n"
                 f"- **Orthogonal Covering**: Pairwise intersection <= 3, Lines 1-3 Central Profile (Sum [{sum_min}, {sum_max}]), Lines 4-5 Wing Defense.\n"
@@ -225,6 +260,7 @@ class PredictionService:
                 "adaptive_mode": alloc_mode,
                 "batch_offset": batch_offset,
                 "neural_used": neural_used,
+                "metaphysics_info": meta_info,
             }
 
             # 7. Persist PredictionBatch with Deduplication

@@ -103,6 +103,7 @@ def generate_prediction(
             "STAT_FILTER": "BALANCED",
             "ML_PROB": adaptive_mode or "AUTO",
             "NEURAL_EVOLVE": "AUTO",
+            "YIJING_METAPHYSICS": "AUTO",
             "AUTO": adaptive_mode or "CONCENTRATED",
         }
         alloc_mode = mode_map.get(canonical_strategy, "CONCENTRATED")
@@ -112,7 +113,9 @@ def generate_prediction(
     # 4. Neural Network or Statistical Probability Estimation
     neural_used = False
     red_probs = None
-    if canonical_strategy in ("NEURAL_EVOLVE", "ML_PROB"):
+    meta_info = None
+
+    if canonical_strategy in ("NEURAL_EVOLVE", "ML_PROB", "YIJING_METAPHYSICS"):
         try:
             from backend.app.services.neural_model import SSQNeuralPredictor
             import numpy as np
@@ -125,7 +128,24 @@ def generate_prediction(
         except Exception:
             neural_used = False
 
-    if not neural_used:
+    if canonical_strategy == "YIJING_METAPHYSICS":
+        try:
+            from backend.app.services.metaphysics_engine import MetaphysicsEngine
+            import numpy as np
+            latest_d = str(historical_draws[-1].draw_date) if historical_draws else "2026-11-03"
+            m_r, m_b, meta_info = MetaphysicsEngine.compute_metaphysics_probabilities(latest_d, str(target_issue))
+            if neural_used and red_probs is not None:
+                # 70% Neural Net + 30% Zhouyi Bagua Metaphysics
+                red_probs = 0.70 * red_probs + 0.30 * np.array(m_r)
+                probs = 0.70 * probs + 0.30 * np.array(m_b)
+            else:
+                red_probs = np.array(m_r)
+                probs = np.array(m_b)
+            ranked_blues = (np.argsort(probs)[::-1] + 1).tolist()
+        except Exception:
+            pass
+
+    if not neural_used and canonical_strategy != "YIJING_METAPHYSICS":
         blue_engine = BlueScoringEngine(history_blues)
         probs, ranked_blues = blue_engine.compute_ensemble_probabilities(weights=active_weights)
 
@@ -147,7 +167,7 @@ def generate_prediction(
         "span_max": request.span_max,
     }
 
-    if canonical_strategy == "NEURAL_EVOLVE":
+    if canonical_strategy in ("NEURAL_EVOLVE", "YIJING_METAPHYSICS"):
         red_lines = red_engine.generate_5_lines_zero_core(
             custom_filters=custom_filters,
             red_probs=red_probs,
@@ -156,7 +176,7 @@ def generate_prediction(
         pool = red_engine.select_zero_core_pool(red_probs=red_probs, batch_offset=batch_offset)
         cores = pool[:4]
         satellites = pool[4:]
-        model_name = "SSQ-NeuralNet-Compact-0.96MB"
+        model_name = "Zhouyi-Bagua-Neural-Dual-Track" if canonical_strategy == "YIJING_METAPHYSICS" else "SSQ-NeuralNet-Compact-0.96MB"
     else:
         cores, satellites = red_engine.select_candidate_pool()
         red_lines = red_engine.generate_5_lines(custom_filters=custom_filters)
@@ -173,7 +193,11 @@ def generate_prediction(
         odd_c = sum(1 for r in line_reds if r % 2 == 1)
         span_v = line_reds[-1] - line_reds[0]
 
-        if canonical_strategy == "NEURAL_EVOLVE":
+        if canonical_strategy == "YIJING_METAPHYSICS":
+            from backend.app.services.metaphysics_engine import MetaphysicsEngine
+            wb = MetaphysicsEngine.get_ticket_wuxing_breakdown(line_reds, b_val)
+            line_rationale = f"Line {idx}: 卦气合化·主五行【{wb['dominant_element']}】+ 蓝{b_val:02d}({wb['blue_element']}) ({alloc_mode})"
+        elif canonical_strategy == "NEURAL_EVOLVE":
             line_rationale = f"Line {idx}: ZeroCore Orthogonal Pool + Blue {b_val:02d} ({alloc_mode})"
         else:
             line_rationale = f"Line {idx}: Cores {cores} + Blue {b_val:02d} ({alloc_mode})"
@@ -212,9 +236,17 @@ def generate_prediction(
         "payoff_on_miss": {"hits": 0, "reward": 0, "net_profit": -10, "roi": -1.00},
     }
 
+    metaphysics_block = ""
+    if meta_info:
+        metaphysics_block = (
+            f"- **周易八卦象数**: 当期卦象【{meta_info.get('hexagram_name', '乾为天')}】| {meta_info.get('prophecy_text', '')}\n"
+            f"- **天干地支五行**: 开奖日柱【{meta_info.get('day_ganzhi', '')}】(日主属{meta_info.get('day_master_element', '')}，支属{meta_info.get('zhi_element', '')})，开奖亥时(水旺生木)\n"
+        )
+
     ai_reasoning = (
         f"### Target Issue {target_issue} Quantitative Prediction Rationale (Batch Offset: {batch_offset})\n"
         f"- **Strategy Mode**: {canonical_strategy} ({alloc_mode}) | **Model**: {model_name}\n"
+        f"{metaphysics_block}"
         f"- **Adaptive Weights**: Hazard={active_weights[0]:.2f}, Markov={active_weights[1]:.2f}, Momentum={active_weights[2]:.2f}\n"
         f"- **Blue Ball Top-2**: Blue {top1_b:02d} ({p1:.2%}), Blue {top2_b:02d} ({p2:.2%})\n"
         f"- **Blue Allocation**: {allocated_blues}\n"
@@ -235,6 +267,7 @@ def generate_prediction(
         "weights": list(active_weights),
         "batch_offset": batch_offset,
         "neural_used": neural_used,
+        "metaphysics_info": meta_info,
     }
 
     blue_probabilities = [
@@ -313,6 +346,7 @@ def generate_prediction(
         candidate_pool=CandidatePoolSummary(cores=cores, satellites=satellites),
         blue_probabilities=blue_probabilities,
         break_even_matrix=break_even_matrix,
+        metaphysics_info=meta_info,
         batch_id=batch_id,
     )
 

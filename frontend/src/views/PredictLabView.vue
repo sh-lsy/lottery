@@ -44,9 +44,15 @@ const savedBatchId = ref<number | null>(null);
 
 const strategies = [
   {
+    key: 'YIJING_METAPHYSICS',
+    name: '☯️ 周易八卦五行量化双轨融合 (Bagua Metaphysics)',
+    tag: '玄学+深度学习',
+    desc: '融合开奖日六十甲子干支、亥时水局、河图洛书九星数理与深度神经网络，十神生克赋权，天人合一！',
+  },
+  {
     key: 'NEURAL_EVOLVE',
     name: '🧠 自研神经网络增量进化 (NeuralNet 0.96MB + 无胆旋转矩阵)',
-    tag: '独家·回测验证',
+    tag: '纯量化·回测验证',
     desc: '基于历史3300+期全量训练的双头深层网络(红蓝联合概率)+13码无胆正交旋转矩阵(彻底消除断胆死局)，每期自动单步微调自进化！',
   },
   {
@@ -450,6 +456,44 @@ onMounted(async () => {
             class="h-60 flex flex-col items-center justify-center text-[#64748b] text-sm font-mono space-y-2"
           >
             <span>点击左侧「立即启动量化推演」即可生成 5 注方案</span>
+          </div>
+        </QuantCard>
+
+        <!-- Metaphysics Oracle & Compass Card -->
+        <QuantCard v-if="result?.metaphysics_info" bordered>
+          <template #title>
+            <div class="flex items-center space-x-2 text-[#f59e0b]">
+              <span>☯️ 周易八卦气运罗盘 & 卦象签辞</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#f59e0b]/20 text-[#fbbf24] border border-[#f59e0b]/30">
+                {{ result.metaphysics_info.hexagram_name }}
+              </span>
+            </div>
+          </template>
+          <div class="space-y-3 font-mono text-xs">
+            <!-- 1. Astro / GanZhi Status -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+              <div class="p-2 rounded bg-[#111827] border border-[#1e293b]">
+                <div class="text-[#64748b]">开奖日柱</div>
+                <div class="text-[#f8fafc] font-bold text-sm mt-0.5">{{ result.metaphysics_info.day_ganzhi }} 日</div>
+              </div>
+              <div class="p-2 rounded bg-[#111827] border border-[#1e293b]">
+                <div class="text-[#64748b]">日主五行</div>
+                <div class="text-[#00d2d3] font-bold text-sm mt-0.5">{{ result.metaphysics_info.day_master_element }} (天干)</div>
+              </div>
+              <div class="p-2 rounded bg-[#111827] border border-[#1e293b]">
+                <div class="text-[#64748b]">开奖时辰</div>
+                <div class="text-[#3b82f6] font-bold text-sm mt-0.5">亥时 (水旺润下)</div>
+              </div>
+              <div class="p-2 rounded bg-[#111827] border border-[#1e293b]">
+                <div class="text-[#64748b]">易经卦象</div>
+                <div class="text-[#f59e0b] font-bold text-sm mt-0.5">{{ result.metaphysics_info.hexagram_name }}</div>
+              </div>
+            </div>
+
+            <!-- 2. Prophecy text -->
+            <div class="p-2.5 rounded bg-[#182234] border border-[#f59e0b]/30 text-[#fde68a] text-xs leading-relaxed">
+              {{ result.metaphysics_info.prophecy_text }}
+            </div>
           </div>
         </QuantCard>
 

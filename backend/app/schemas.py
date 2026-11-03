@@ -240,6 +240,7 @@ class PredictionGenerateResponse(BaseModel):
     candidate_pool: Any
     blue_probabilities: Optional[List[BlueProbabilityItem]] = None
     break_even_matrix: Optional[Dict[str, Any]] = None
+    metaphysics_info: Optional[Dict[str, Any]] = None
     batch_id: Optional[int] = None
 
 

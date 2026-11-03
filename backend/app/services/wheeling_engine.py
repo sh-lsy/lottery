@@ -326,6 +326,11 @@ class RedWheelingEngine:
             if v_w:
                 wing_cands.append(cand)
 
+        # Crucial ranking: Sort candidate combinations by composite/neural probability score
+        if red_probs is not None and len(red_probs) == 33:
+            central_cands.sort(key=lambda c: -sum(float(red_probs[b - 1]) for b in c))
+            wing_cands.sort(key=lambda c: -sum(float(red_probs[b - 1]) for b in c))
+
         chosen_lines: List[List[int]] = []
         ball_counts: Dict[int, int] = {b: 0 for b in pool}
 
