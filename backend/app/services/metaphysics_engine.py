@@ -38,6 +38,44 @@ DIZHI_WUXING = {
     "亥": "水", "子": "水",
 }
 
+# 12 DiZhi to Triad Element:
+# 申子辰 -> 水局, 亥卯未 -> 木局, 寅午戌 -> 火局, 巳酉丑 -> 金局
+DIZHI_TRIADS = {
+    "申": "水", "子": "水", "辰": "水",
+    "亥": "木", "卯": "木", "未": "木",
+    "寅": "火", "午": "火", "戌": "火",
+    "巳": "金", "酉": "金", "丑": "金",
+}
+
+# DiZhi Six Harmony Pairs:
+DIZHI_SIX_HARMONY = {
+    "子": "丑", "丑": "子",
+    "寅": "亥", "亥": "寅",
+    "卯": "戌", "戌": "卯",
+    "辰": "酉", "酉": "辰",
+    "巳": "申", "申": "巳",
+    "午": "未", "未": "午",
+}
+
+TRIGRAM_ELEMENTS = {
+    "乾": "金", "兑": "金", "离": "火", "震": "木",
+    "巽": "木", "坎": "水", "艮": "土", "坤": "土",
+}
+
+TRIGRAM_LINES = {
+    "乾": [1, 1, 1], "兑": [1, 1, 0], "离": [1, 0, 1], "震": [1, 0, 0],
+    "巽": [0, 1, 1], "坎": [0, 1, 0], "艮": [0, 0, 1], "坤": [0, 0, 0],
+}
+
+LINES_TO_TRIGRAM = {tuple(v): k for k, v in TRIGRAM_LINES.items()}
+
+
+def get_ball_dizhi(ball_num: int) -> str:
+    """Returns Earthly Branch for ball number (1..33) modulo 12."""
+    rem = (ball_num - 1) % 12
+    return DIZHI[rem]
+
+
 # Wuxing to Element Index: 金:0, 木:1, 水:2, 火:3, 土:4
 WUXING_INDEX = {"金": 0, "木": 1, "水": 2, "火": 3, "土": 4}
 
@@ -183,9 +221,42 @@ class MetaphysicsEngine:
         # Restraining cycle: 金克木, 木克土, 土克水, 水克火, 火克金
         restrains = {"金": "木", "木": "土", "土": "水", "水": "火", "火": "金"}
 
+        # Meihua Yishu Hexagram, Dongyao, and Bian Gua Calculation
+        try:
+            issue_int = sum(int(c) for c in str(issue_no) if c.isdigit())
+        except Exception:
+            issue_int = 18
+
+        upper_num = (dt.year + dt.month + dt.day) % 8
+        lower_num = (dt.year + dt.month + dt.day + 12 + issue_int) % 8  # 12 is Hai hour
+        dongyao = (dt.year + dt.month + dt.day + 12 + issue_int) % 6 + 1  # Changing line 1..6
+
+        up_name = EARLY_BAGUA_NAMES[upper_num]
+        low_name = EARLY_BAGUA_NAMES[lower_num]
+        hex_lines = TRIGRAM_LINES[low_name] + TRIGRAM_LINES[up_name]
+
+        # Bian Gua (Transformed Hexagram via Dongyao bit flip)
+        bian_lines = list(hex_lines)
+        bian_lines[dongyao - 1] = 1 - bian_lines[dongyao - 1]
+        bian_low = LINES_TO_TRIGRAM.get(tuple(bian_lines[:3]), low_name)
+        bian_up = LINES_TO_TRIGRAM.get(tuple(bian_lines[3:]), up_name)
+
+        # Hu Gua (Nuclear Hexagram: lines 2,3,4 and 3,4,5)
+        hu_low = LINES_TO_TRIGRAM.get(tuple(hex_lines[1:4]), low_name)
+        hu_up = LINES_TO_TRIGRAM.get(tuple(hex_lines[2:5]), up_name)
+
+        # Auspicious elements from Bian Gua & Hu Gua
+        bian_element = TRIGRAM_ELEMENTS.get(bian_up if dongyao <= 3 else bian_low, "金")
+        hu_element = TRIGRAM_ELEMENTS.get(hu_up, "水")
+
+        hex_idx = (upper_num * 8 + lower_num) % len(HEXAGRAM_NAMES)
+        hex_name = HEXAGRAM_NAMES[hex_idx]
+
         def get_wuxing_energy(ball_num: int, is_blue: bool = False) -> float:
             bw = get_ball_wuxing(ball_num)
-            # Ten Gods affinity base score
+            b_zhi = get_ball_dizhi(ball_num)
+
+            # 1. Ten Gods affinity base score
             if restrains[day_wuxing] == bw:
                 score = 2.4  # 偏正财星 (primary wealth affinity)
             elif promotes[bw] == day_wuxing:
@@ -197,7 +268,7 @@ class MetaphysicsEngine:
             else:
                 score = 0.2  # 官杀克身 (officer restraint)
 
-            # Hai hour harmony (water generates wood, supported by metal)
+            # 2. Hai hour harmony (water generates wood, supported by metal)
             if bw in ("水", "木"):
                 score += 0.8
             elif bw == "金":
@@ -205,12 +276,24 @@ class MetaphysicsEngine:
             elif bw == "土":
                 score -= 0.4  # Earth blocks water
 
-            # Jiugong Modulo resonance
+            # 3. Jiugong Modulo resonance
             star = JIUGONG_BAGUA[ball_num % 9]
             if star["element"] in (day_wuxing, hour_wuxing):
                 score += 0.4
 
-            # Blue ball Kan Water / Dui Metal resonance
+            # 4. Earthly Branch Six Harmony & Three Harmonies Resonance
+            if DIZHI_SIX_HARMONY.get(day_zhi) == b_zhi:
+                score += 0.6  # 六合贵人吉星
+            if DIZHI_TRIADS.get(day_zhi) == DIZHI_TRIADS.get(b_zhi):
+                score += 0.5  # 三合局气运共振
+
+            # 5. Meihua Yishu Bian Gua & Hu Gua auspicious resonance
+            if bw == bian_element:
+                score += 0.5  # 变卦用神相生
+            if bw == hu_element:
+                score += 0.3  # 互卦暗藏机运
+
+            # 6. Blue ball Kan Water / Dui Metal resonance
             if is_blue:
                 if bw == "水":
                     score += 1.2
@@ -231,20 +314,14 @@ class MetaphysicsEngine:
         exp_b = np.exp((blue_energies - np.max(blue_energies)) / tau)
         blue_probs = (exp_b / np.sum(exp_b)).tolist()
 
-        # 3. Meihua Yishu Hexagram Generation
-        # Upper trigram = (Year + Month + Day + Issue_sum) % 8
-        try:
-            issue_int = sum(int(c) for c in str(issue_no) if c.isdigit())
-        except Exception:
-            issue_int = 18
-
-        upper_num = (dt.year + dt.month + dt.day) % 8
-        lower_num = (dt.year + dt.month + dt.day + 12 + issue_int) % 8  # 12 is Hai hour
-        hex_idx = (upper_num * 8 + lower_num) % len(HEXAGRAM_NAMES)
-        hex_name = HEXAGRAM_NAMES[hex_idx]
-        prophecy = HEXAGRAM_PROPHECIES.get(
+        # 3. Meihua Prophecy Construction
+        base_prophecy = HEXAGRAM_PROPHECIES.get(
             hex_name,
             f"【周易第{hex_idx+1}卦·{hex_name}】乾坤造化，阴阳相济，金水相涵，气机勃发。",
+        )
+        prophecy = (
+            f"{base_prophecy} 动爻居第{dongyao}爻，变卦感应【{bian_up}下{bian_low}】(用神属{bian_element})，"
+            f"互卦【{hu_up}下{hu_low}】(机运属{hu_element})，日支【{day_zhi}】合局共振。"
         )
 
         metadata = {
@@ -254,6 +331,9 @@ class MetaphysicsEngine:
             "zhi_element": zhi_wuxing,
             "hour_wuxing": hour_wuxing,
             "hexagram_name": hex_name,
+            "dongyao": dongyao,
+            "bian_hexagram": f"{bian_up}下{bian_low}",
+            "hu_hexagram": f"{hu_up}下{hu_low}",
             "prophecy_text": prophecy,
         }
 

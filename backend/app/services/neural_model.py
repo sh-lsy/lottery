@@ -147,7 +147,8 @@ class SSQNeuralPredictor:
         n_samples = X.shape[0]
 
         self.model.train()
-        criterion_red = nn.BCEWithLogitsLoss()
+        pos_weight = torch.tensor([4.5], dtype=torch.float32, device=self.device)
+        criterion_red = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         criterion_blue = nn.CrossEntropyLoss()
         optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -207,39 +208,59 @@ class SSQNeuralPredictor:
         self,
         actual_draw: DrawHistory,
         history_prior: List[DrawHistory],
-        lr: float = 5e-4,
+        lr: float = 1e-4,
         steps: int = 2,
     ) -> float:
         """
         Online incremental fine-tuning: incorporates actual_draw as new supervision.
+        Uses a rolling mini-replay buffer of recent 5 draws with pos_weight=4.5 to avoid single-sample gradient shock.
         Executes gradient steps on CPU (typically < 30ms) and saves updated checkpoint.
         Returns loss value.
         """
         if len(history_prior) < self.window_size:
             return 0.0
 
-        encoded_window = [self.encode_single_draw(d) for d in history_prior[-self.window_size:]]
-        x_flat = np.concatenate(encoded_window).astype(np.float32)
-        x_tensor = torch.tensor(x_flat, dtype=torch.float32, device=self.device).unsqueeze(0)
+        all_draws = history_prior + [actual_draw]
+        replay_k = min(5, len(all_draws) - self.window_size)
 
-        target_red = np.zeros(33, dtype=np.float32)
-        for r in actual_draw.reds:
-            if 1 <= r <= 33:
-                target_red[r - 1] = 1.0
-        y_r = torch.tensor(target_red, dtype=torch.float32, device=self.device).unsqueeze(0)
-        y_b = torch.tensor([actual_draw.blue_1 - 1], dtype=torch.long, device=self.device)
+        x_list, y_r_list, y_b_list = [], [], []
+        for offset in range(replay_k):
+            end_idx = len(all_draws) - offset
+            start_idx = end_idx - 1 - self.window_size
+            target_idx = end_idx - 1
+            if start_idx < 0:
+                break
+            w_slice = all_draws[start_idx:target_idx]
+            target_d = all_draws[target_idx]
+
+            encoded_w = [self.encode_single_draw(d) for d in w_slice]
+            x_flat = np.concatenate(encoded_w).astype(np.float32)
+
+            target_red = np.zeros(33, dtype=np.float32)
+            for r in target_d.reds:
+                if 1 <= r <= 33:
+                    target_red[r - 1] = 1.0
+
+            x_list.append(x_flat)
+            y_r_list.append(target_red)
+            y_b_list.append(target_d.blue_1 - 1)
+
+        bx = torch.tensor(np.array(x_list), dtype=torch.float32, device=self.device)
+        by_r = torch.tensor(np.array(y_r_list), dtype=torch.float32, device=self.device)
+        by_b = torch.tensor(np.array(y_b_list), dtype=torch.long, device=self.device)
 
         self.model.train()
-        criterion_red = nn.BCEWithLogitsLoss()
+        pos_weight = torch.tensor([4.5], dtype=torch.float32, device=self.device)
+        criterion_red = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         criterion_blue = nn.CrossEntropyLoss()
         fine_optimizer = optim.AdamW(self.model.parameters(), lr=lr)
 
         total_loss = 0.0
         for _ in range(steps):
             fine_optimizer.zero_grad()
-            pred_r, pred_b = self.model(x_tensor)
-            loss_r = criterion_red(pred_r, y_r)
-            loss_b = criterion_blue(pred_b, y_b)
+            pred_r, pred_b = self.model(bx)
+            loss_r = criterion_red(pred_r, by_r)
+            loss_b = criterion_blue(pred_b, by_b)
             loss = loss_r + loss_b * 1.5
             loss.backward()
             fine_optimizer.step()

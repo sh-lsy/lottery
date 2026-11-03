@@ -82,6 +82,11 @@ def run_benchmark():
         },
     }
 
+    r9 = {
+        "V1": {"cost": 0, "reward": 0, "be": 0, "blue": 0, "prizes": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}},
+        "V2": {"cost": 0, "reward": 0, "be": 0, "blue": 0, "prizes": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}},
+    }
+
     # 2. Sequential walk-forward evaluation across 221 draws
     print(f"\n[Step 2] Executing sequential walk-forward backtest across {test_size} draws with online self-evolution...")
     history_window = list(draws[:train_size])
@@ -169,6 +174,18 @@ def run_benchmark():
             m2["blue_hit_count"] += 1
         m2["red_hit_max_counts"][m2_max_red] += 1
 
+        # Track recent 9 issues slice (Issues 2026116 to 2026124)
+        if idx >= total_draws - 9:
+            r9["V1"]["cost"] += 10
+            r9["V1"]["reward"] += m1_reward
+            if m1_reward >= 10: r9["V1"]["be"] += 1
+            if m1_blue_hit: r9["V1"]["blue"] += 1
+
+            r9["V2"]["cost"] += 10
+            r9["V2"]["reward"] += m2_reward
+            if m2_reward >= 10: r9["V2"]["be"] += 1
+            if m2_blue_hit: r9["V2"]["blue"] += 1
+
         # F. Online Self-Evolution with actual_draw (calibrated conservative lr to preserve representations)
         _ = predictor.online_update(actual_draw, history_window, lr=1e-4, steps=1)
         history_window.append(actual_draw)
@@ -178,6 +195,10 @@ def run_benchmark():
             print(f"  Processed {curr_n}/{test_size} issues | V1 Reward: {m1['total_reward']} RMB (BE: {m1['break_even_count']}) | V2 Metaphysics Reward: {m2['total_reward']} RMB (BE: {m2['break_even_count']})")
 
     t_eval = time.time() - t_eval_start
+
+    # Track recent 9 issues slice (Issues 2026116 to 2026124)
+    r9_start_idx = total_draws - 9
+    r9_issues = draws[r9_start_idx:]
 
     # Clean up temp backtest checkpoint
     if os.path.exists(model_path):
@@ -225,6 +246,23 @@ def run_benchmark():
 
     print("-" * 90)
     print(f"Evaluation finished in {t_eval:.2f}s ({t_eval/test_size*1000:.1f}ms per draw).")
+    print("=" * 90)
+
+    # 4. Print Recent 9-Issue Slice (User's Empirical Test Window: Issues 2026116 to 2026124)
+    print("\n" + "=" * 90)
+    print("RECENT 9-ISSUE SLICE BENCHMARK (User Test Issues: 2026116 to 2026124)")
+    print("=" * 90)
+    print(f"{'Performance Metric':<30} | {'V1: 纯量化神经网络优化版':<26} | {'V2: 周易八卦五行双轨版':<26}")
+    print("-" * 90)
+    r1, r2 = r9["V1"], r9["V2"]
+    roi_r1 = (r1["reward"] - r1["cost"]) / r1["cost"] * 100.0 if r1["cost"] > 0 else 0.0
+    roi_r2 = (r2["reward"] - r2["cost"]) / r2["cost"] * 100.0 if r2["cost"] > 0 else 0.0
+    print(f"{'9-Issue Cost (投入 9期)':<30} | {r1['cost']:>10,} RMB              | {r2['cost']:>10,} RMB")
+    print(f"{'9-Issue Reward (累计奖金)':<30} | {r1['reward']:>10,} RMB              | {r2['reward']:>10,} RMB")
+    print(f"{'9-Issue Net Profit (净盈亏)':<30} | {r1['reward'] - r1['cost']:>+10,} RMB              | {r2['reward'] - r2['cost']:>+10,} RMB")
+    print(f"{'9-Issue ROI (投资回报率)':<30} | {roi_r1:>+9.2f}%               | {roi_r2:>+9.2f}%")
+    print(f"{'9-Issue Break-Even Rate':<30} | {r1['be']}/9 ({r1['be']/9*100:.1f}%)                 | {r2['be']}/9 ({r2['be']/9*100:.1f}%)")
+    print(f"{'9-Issue Blue Hit Rate':<30} | {r1['blue']}/9 ({r1['blue']/9*100:.1f}%)               | {r2['blue']}/9 ({r2['blue']/9*100:.1f}%)")
     print("=" * 90)
 
     return models
