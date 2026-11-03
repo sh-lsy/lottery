@@ -12,6 +12,8 @@ Dataset Partition:
 
 import sys
 import os
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import time
@@ -136,6 +138,8 @@ def run_benchmark():
                 second_prize_amt=actual_draw.second_prize_amount,
             )
             m1_reward += audit["payout"]
+            if audit["payout"] >= 200:
+                print(f"!!! V1 BIG PRIZE: Issue {actual_draw.issue_no} (offset {idx-train_size}), Prize Level {audit['prize_level']}, Payout {audit['payout']}, Predicted: {v1_red_lines[note_idx]} + {v1_blues[note_idx]}, Actual: {actual_draw.reds} + {actual_draw.blue_1}")
             if audit["hit_blue"]:
                 m1_blue_hit = True
             m1_max_red = max(m1_max_red, audit["hit_red_count"])
@@ -162,6 +166,8 @@ def run_benchmark():
                 second_prize_amt=actual_draw.second_prize_amount,
             )
             m2_reward += audit["payout"]
+            if audit["payout"] >= 200:
+                print(f"!!! V2 BIG PRIZE: Issue {actual_draw.issue_no} (offset {idx-train_size}), Prize Level {audit['prize_level']}, Payout {audit['payout']}, Predicted: {v2_red_lines[note_idx]} + {v2_blues[note_idx]}, Actual: {actual_draw.reds} + {actual_draw.blue_1}")
             if audit["hit_blue"]:
                 m2_blue_hit = True
             m2_max_red = max(m2_max_red, audit["hit_red_count"])
