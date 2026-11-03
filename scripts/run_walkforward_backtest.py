@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import time
 from typing import Dict, List, Any
 import numpy as np
+import torch
 from sqlalchemy import select
 
 from backend.app.database import SessionLocal
@@ -33,6 +34,9 @@ def run_benchmark():
     print("SSQ DUAL-MODEL WALK-FORWARD BENCHMARK (3300 Train / 221 Test with Online Evolution)")
     print("Version 1: 纯量化神经网络优化版 vs Version 2: 周易八卦五行双轨融合版")
     print("=" * 90)
+
+    torch.manual_seed(42)
+    np.random.seed(42)
 
     session = SessionLocal()
     draws = session.scalars(select(DrawHistory).order_by(DrawHistory.issue_no.asc())).all()
@@ -106,12 +110,12 @@ def run_benchmark():
         # Model 1: Pure Quant
         v1_ranked_blues = (np.argsort(nn_blue_probs)[::-1] + 1).tolist()
         v1_red_lines = red_engine.generate_5_lines_zero_core(red_probs=nn_red_probs)
-        v1_blues = BlueAllocationStrategy.allocate(v1_ranked_blues, probs=nn_blue_probs, mode="DYNAMIC_THRESHOLD")
+        v1_blues = BlueAllocationStrategy.allocate(v1_ranked_blues, probs=nn_blue_probs, mode="BALANCED")
 
         # Model 2: Bagua Metaphysics
         v2_ranked_blues = (np.argsort(meta_fused_blue)[::-1] + 1).tolist()
         v2_red_lines = red_engine.generate_5_lines_zero_core(red_probs=meta_fused_red)
-        v2_blues = BlueAllocationStrategy.allocate(v2_ranked_blues, probs=meta_fused_blue, mode="DYNAMIC_THRESHOLD")
+        v2_blues = BlueAllocationStrategy.allocate(v2_ranked_blues, probs=meta_fused_blue, mode="BALANCED")
 
         # D. Audit Model 1
         m1 = models["V1_PURE_QUANT"]
@@ -165,8 +169,8 @@ def run_benchmark():
             m2["blue_hit_count"] += 1
         m2["red_hit_max_counts"][m2_max_red] += 1
 
-        # F. Online Self-Evolution with actual_draw
-        _ = predictor.online_update(actual_draw, history_window, lr=5e-4, steps=1)
+        # F. Online Self-Evolution with actual_draw (calibrated conservative lr to preserve representations)
+        _ = predictor.online_update(actual_draw, history_window, lr=1e-4, steps=1)
         history_window.append(actual_draw)
 
         if (idx - train_size + 1) % 50 == 0 or idx == total_draws - 1:
@@ -206,9 +210,18 @@ def run_benchmark():
     print(f"{'Blue Hit Rate (蓝球命中率)':<30} | {m1['blue_hit_count']}/{test_size} ({m1['blue_rate']:.1f}%)           | {m2['blue_hit_count']}/{test_size} ({m2['blue_rate']:.1f}%)")
     print("-" * 90)
     print("Prize Tiers Breakdown (Across 1,105 Notes):")
-    for lvl in [4, 5, 6]:
-        desc = "四等奖 (200元)" if lvl == 4 else ("五等奖 (10元)" if lvl == 5 else "六等奖 (5元)")
-        print(f"  - {desc:<24} | {m1['prize_counts'][lvl]:>6} 注                 | {m2['prize_counts'][lvl]:>6} 注")
+    tier_desc = {
+        1: "一等奖 (浮动头奖)",
+        2: "二等奖 (浮动二奖)",
+        3: "三等奖 (3,000元)",
+        4: "四等奖 (200元)",
+        5: "五等奖 (10元)",
+        6: "六等奖 (5元)",
+    }
+    for lvl in [1, 2, 3, 4, 5, 6]:
+        desc = tier_desc[lvl]
+        if lvl >= 3 or m1['prize_counts'][lvl] > 0 or m2['prize_counts'][lvl] > 0:
+            print(f"  - {desc:<24} | {m1['prize_counts'][lvl]:>6} 注                 | {m2['prize_counts'][lvl]:>6} 注")
 
     print("-" * 90)
     print(f"Evaluation finished in {t_eval:.2f}s ({t_eval/test_size*1000:.1f}ms per draw).")

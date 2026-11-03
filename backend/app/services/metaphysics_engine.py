@@ -178,43 +178,58 @@ class MetaphysicsEngine:
         # SSQ always draws at 21:15 (Hai hour: Water element)
         hour_wuxing = "水"
 
-        # 1. Score 33 Red Balls
-        red_scores = []
-        for b in range(1, 34):
-            b_wuxing = get_ball_wuxing(b)
-            _, mult = cls.calculate_ten_gods_relation(day_gan, b)
+        # Generating cycle: 木生火, 火生土, 土生金, 金生水, 水生木
+        promotes = {"木": "火", "火": "土", "土": "金", "金": "水", "水": "木"}
+        # Restraining cycle: 金克木, 木克土, 土克水, 水克火, 火克金
+        restrains = {"金": "木", "木": "土", "土": "水", "水": "火", "火": "金"}
 
-            # Hour harmony (Hai Water supports Wood, promotes Water, controlled by Earth)
-            if b_wuxing in ("木", "水"):
-                mult *= 1.08
-            elif b_wuxing == "火":
-                mult *= 1.02
+        def get_wuxing_energy(ball_num: int, is_blue: bool = False) -> float:
+            bw = get_ball_wuxing(ball_num)
+            # Ten Gods affinity base score
+            if restrains[day_wuxing] == bw:
+                score = 2.4  # 偏正财星 (primary wealth affinity)
+            elif promotes[bw] == day_wuxing:
+                score = 2.0  # 印绶生身 (resource nourishment)
+            elif promotes[day_wuxing] == bw:
+                score = 1.6  # 食伤生财 (output creating wealth)
+            elif day_wuxing == bw:
+                score = 1.1  # 比劫帮身 (peer support)
+            else:
+                score = 0.2  # 官杀克身 (officer restraint)
 
-            # Jiugong Modulo
-            star = JIUGONG_BAGUA[b % 9]
+            # Hai hour harmony (water generates wood, supported by metal)
+            if bw in ("水", "木"):
+                score += 0.8
+            elif bw == "金":
+                score += 0.5
+            elif bw == "土":
+                score -= 0.4  # Earth blocks water
+
+            # Jiugong Modulo resonance
+            star = JIUGONG_BAGUA[ball_num % 9]
             if star["element"] in (day_wuxing, hour_wuxing):
-                mult *= 1.05
+                score += 0.4
 
-            red_scores.append(mult)
+            # Blue ball Kan Water / Dui Metal resonance
+            if is_blue:
+                if bw == "水":
+                    score += 1.2
+                elif bw == "金":
+                    score += 0.8
 
-        # Normalize Red scores
-        r_sum = sum(red_scores)
-        red_probs = [s / r_sum for s in red_scores]
+            return score
 
-        # 2. Score 16 Blue Balls (Blue is deeply connected to Kan Water and Zhen Wood)
-        blue_scores = []
-        for b in range(1, 17):
-            b_wuxing = get_ball_wuxing(b)
-            _, mult = cls.calculate_ten_gods_relation(day_gan, b)
-            if b_wuxing == "水":
-                mult *= 1.15
-            elif b_wuxing == "金":  # Metal generates Water
-                mult *= 1.12
+        # 1. Score 33 Red Balls using Softmax Temperature Scaling (tau = 0.45)
+        tau = 0.45
+        import numpy as np
+        red_energies = np.array([get_wuxing_energy(b, is_blue=False) for b in range(1, 34)], dtype=float)
+        exp_r = np.exp((red_energies - np.max(red_energies)) / tau)
+        red_probs = (exp_r / np.sum(exp_r)).tolist()
 
-            blue_scores.append(mult)
-
-        b_sum = sum(blue_scores)
-        blue_probs = [s / b_sum for s in blue_scores]
+        # 2. Score 16 Blue Balls using Softmax Temperature Scaling (tau = 0.45)
+        blue_energies = np.array([get_wuxing_energy(b, is_blue=True) for b in range(1, 17)], dtype=float)
+        exp_b = np.exp((blue_energies - np.max(blue_energies)) / tau)
+        blue_probs = (exp_b / np.sum(exp_b)).tolist()
 
         # 3. Meihua Yishu Hexagram Generation
         # Upper trigram = (Year + Month + Day + Issue_sum) % 8

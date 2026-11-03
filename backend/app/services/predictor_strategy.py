@@ -189,8 +189,8 @@ class PredictionService:
                 "DISPERSED_BASELINE": "DISPERSED",
                 "STAT_FILTER": "BALANCED",
                 "ML_PROB": "AUTO",
-                "NEURAL_EVOLVE": "AUTO",
-                "YIJING_METAPHYSICS": "AUTO",
+                "NEURAL_EVOLVE": "BALANCED",
+                "YIJING_METAPHYSICS": "BALANCED",
             }
             if custom_blue_mode:
                 alloc_mode = custom_blue_mode

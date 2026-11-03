@@ -326,49 +326,71 @@ class RedWheelingEngine:
             if v_w:
                 wing_cands.append(cand)
 
-        # Crucial ranking: Sort candidate combinations by composite/neural probability score
-        if red_probs is not None and len(red_probs) == 33:
-            central_cands.sort(key=lambda c: -sum(float(red_probs[b - 1]) for b in c))
-            wing_cands.sort(key=lambda c: -sum(float(red_probs[b - 1]) for b in c))
+        # Dynamic Weighted Penalization Covering Matrix
+        # Maximizes composite candidate probability while penalizing duplicate ball frequency
+        # and strictly enforcing pairwise overlap <= 3 to ensure orthogonal coverage.
+        probs_dict = {
+            b: float(red_probs[b - 1]) if (red_probs is not None and len(red_probs) == 33) else 1.0
+            for b in pool
+        }
 
         chosen_lines: List[List[int]] = []
         ball_counts: Dict[int, int] = {b: 0 for b in pool}
 
-        # Step 1: Pick 3 Central lines with overlap <= 3 and balanced frequency
-        for cand in central_cands:
-            if len(chosen_lines) == 3:
-                break
-            if any(len(set(cand) & set(prev)) > 3 for prev in chosen_lines):
-                continue
-            if any(ball_counts[b] >= 3 for b in cand):
-                continue
-            chosen_lines.append(cand)
-            for b in cand:
-                ball_counts[b] += 1
-
-        # Fallback if strict central search didn't get 3
-        if len(chosen_lines) < 3:
+        # Step 1: Pick 3 Central lines via Dynamic Weighted Penalization
+        for _ in range(3):
+            best_cand = None
+            best_val = -9999.0
             for cand in central_cands:
-                if len(chosen_lines) == 3:
-                    break
-                if cand not in chosen_lines and all(len(set(cand) & set(prev)) <= 4 for prev in chosen_lines):
-                    chosen_lines.append(cand)
-                    for b in cand:
-                        ball_counts[b] += 1
+                if cand in chosen_lines:
+                    continue
+                max_ov = max([len(set(cand) & set(prev)) for prev in chosen_lines], default=0)
+                if max_ov > 3:
+                    continue
+                if any(ball_counts[b] >= 3 for b in cand):
+                    continue
+                # Composite value: sum of probabilities - count penalty - overlap penalty
+                val = sum(probs_dict[b] for b in cand) - 0.25 * sum(ball_counts[b] for b in cand) - 0.15 * max_ov
+                if val > best_val:
+                    best_val = val
+                    best_cand = cand
+
+            if best_cand:
+                chosen_lines.append(best_cand)
+                for b in best_cand:
+                    ball_counts[b] += 1
+            else:
+                # Relax overlap to <= 4 if strict <= 3 cannot be formed
+                for cand in central_cands:
+                    if cand not in chosen_lines and all(len(set(cand) & set(prev)) <= 4 for prev in chosen_lines):
+                        chosen_lines.append(cand)
+                        for b in cand:
+                            ball_counts[b] += 1
+                        break
 
         # Step 2: Pick 2 Wing lines to cover under-represented pool balls
-        remaining_cands = [c for c in wing_cands if c not in chosen_lines]
-        # Sort remaining by how many under-represented balls (count < 2) they cover
-        remaining_cands.sort(key=lambda c: -sum(1 for b in c if ball_counts[b] < 2))
-
-        for cand in remaining_cands:
-            if len(chosen_lines) == 5:
+        remaining_wing = [c for c in wing_cands if c not in chosen_lines]
+        for _ in range(2):
+            if len(chosen_lines) >= 5:
                 break
-            if any(len(set(cand) & set(prev)) > 4 for prev in chosen_lines):
-                continue
-            chosen_lines.append(cand)
-            for b in cand:
-                ball_counts[b] += 1
+            best_cand = None
+            best_val = -9999.0
+            for cand in remaining_wing:
+                if cand in chosen_lines:
+                    continue
+                max_ov = max([len(set(cand) & set(prev)) for prev in chosen_lines], default=0)
+                if max_ov > 4:
+                    continue
+                under_rep = sum(1 for b in cand if ball_counts[b] < 2)
+                val = sum(probs_dict[b] for b in cand) + 0.5 * under_rep - 0.2 * sum(ball_counts[b] for b in cand)
+                if val > best_val:
+                    best_val = val
+                    best_cand = cand
+
+            if best_cand:
+                chosen_lines.append(best_cand)
+                for b in best_cand:
+                    ball_counts[b] += 1
 
         # Final safety check: if still < 5 lines, backfill from central or wing
         for cand in central_cands + wing_cands:
