@@ -22,6 +22,7 @@ def normalize_strategy_type(strategy: Optional[str]) -> str:
       - 'DISPERSED_BASELINE', 'dispersed', 'baseline' -> 'DISPERSED_BASELINE'
       - 'STAT_FILTER', 'balanced', 'statistical_filter' -> 'STAT_FILTER'
       - 'ML_PROB', 'ml', 'prob', 'auto' -> 'ML_PROB'
+      - 'NEURAL_EVOLVE', 'neural', 'ai', 'nn', 'ssq_neural' -> 'NEURAL_EVOLVE'
     """
     s = (strategy or "").strip().upper()
     if not s or s in ("CONCENTRATED_BREAK_EVEN", "CONCENTRATED", "BREAK_EVEN"):
@@ -30,11 +31,13 @@ def normalize_strategy_type(strategy: Optional[str]) -> str:
         return "DISPERSED_BASELINE"
     elif s in ("STAT_FILTER", "STATISTICAL_FILTER", "BALANCED"):
         return "STAT_FILTER"
+    elif s in ("NEURAL_EVOLVE", "NEURAL", "AI", "NN", "SSQ_NEURAL"):
+        return "NEURAL_EVOLVE"
     elif s in ("ML_PROB", "ML", "PROB", "AUTO"):
         return "ML_PROB"
     else:
         # Check if already a valid schema value
-        valid = {"CONCENTRATED_BREAK_EVEN", "DISPERSED_BASELINE", "STAT_FILTER", "ML_PROB"}
+        valid = {"CONCENTRATED_BREAK_EVEN", "DISPERSED_BASELINE", "STAT_FILTER", "ML_PROB", "NEURAL_EVOLVE"}
         if s in valid:
             return s
         raise ValueError(f"Unknown strategy: '{strategy}'. Valid choices are: {sorted(list(valid))}")
@@ -67,6 +70,7 @@ class PredictionService:
         custom_weights: Optional[Tuple[float, float, float]] = None,
         custom_blue_mode: Optional[str] = None,
         custom_filters: Optional[dict] = None,
+        batch_offset: int = 0,
         persist: bool = True,
     ) -> PredictionBatch:
         """
@@ -79,6 +83,7 @@ class PredictionService:
         :param custom_weights: Optional explicit weights (hazard, markov, momentum).
         :param custom_blue_mode: Optional blue allocation mode override.
         :param custom_filters: Optional custom statistical guardrails.
+        :param batch_offset: Offset index for multi-batch rotation (e.g. 0 -> Batch 1, 1 -> Batch 2).
         :param persist: Whether to commit records to SQLite database.
         :return: PredictionBatch instance with 5 linked items.
         """
@@ -135,29 +140,53 @@ class PredictionService:
                 sum_max = custom_filters.get("sum_max", sum_max)
                 ac_min = custom_filters.get("ac_min", ac_min)
 
-            # 4. Blue Multi-Model Ensemble Scoring with Active Weights
-            blue_engine = BlueScoringEngine(history_blues)
-            probs, ranked_blues = blue_engine.compute_ensemble_probabilities(weights=active_weights)
+            # 4. Neural Network or Statistical Probability Estimation
+            neural_used = False
+            red_probs = None
+            blue_probs = None
 
-            # 5. Dynamic Break-Even Blue Allocation
+            if canonical_strategy in ("NEURAL_EVOLVE", "ML_PROB"):
+                try:
+                    from backend.app.services.neural_model import SSQNeuralPredictor
+                    import numpy as np
+                    predictor = SSQNeuralPredictor()
+                    r_p, b_p = predictor.predict_probabilities(historical_draws)
+                    red_probs = r_p
+                    blue_probs = b_p
+                    neural_used = True
+                    ranked_blues = (np.argsort(blue_probs)[::-1] + 1).tolist()
+                    probs = blue_probs
+                except Exception:
+                    neural_used = False
+
+            if not neural_used:
+                blue_engine = BlueScoringEngine(history_blues)
+                probs, ranked_blues = blue_engine.compute_ensemble_probabilities(weights=active_weights)
+
+            # 5. Dynamic Break-Even Blue Allocation with Rotation
             mode_map = {
                 "CONCENTRATED_BREAK_EVEN": "CONCENTRATED",
                 "DISPERSED_BASELINE": "DISPERSED",
                 "STAT_FILTER": "BALANCED",
                 "ML_PROB": "AUTO",
+                "NEURAL_EVOLVE": "AUTO",
             }
             if custom_blue_mode:
                 alloc_mode = custom_blue_mode
             elif canonical_strategy == "CONCENTRATED_BREAK_EVEN" and adaptive_mode:
                 alloc_mode = adaptive_mode
             else:
-                alloc_mode = mode_map.get(canonical_strategy, "CONCENTRATED")
+                alloc_mode = mode_map.get(canonical_strategy, "AUTO")
 
-            allocated_blues = BlueAllocationStrategy.allocate(ranked_blues, probs, mode=alloc_mode)
+            allocated_blues = BlueAllocationStrategy.allocate(
+                ranked_blues,
+                probs,
+                mode=alloc_mode,
+                batch_offset=batch_offset,
+            )
 
-            # 6. Red Dan-Tuo Combinatorial Wheeling with Guardrails
+            # 6. Red Zero-Core Orthogonal Wheeling with Portfolio Tiering
             red_engine = RedWheelingEngine(history_reds)
-            cores, satellites = red_engine.select_candidate_pool()
             cf = {
                 "sum_min": sum_min,
                 "sum_max": sum_max,
@@ -165,36 +194,37 @@ class PredictionService:
             }
             if custom_filters:
                 cf.update(custom_filters)
-            red_lines = red_engine.generate_5_lines(custom_filters=cf)
+
+            # Zero-core orthogonal covering by default (eliminating 2-core deadlocks)
+            red_lines = red_engine.generate_5_lines_zero_core(
+                custom_filters=cf,
+                red_probs=red_probs,
+                batch_offset=batch_offset,
+            )
+            candidate_pool = red_engine.select_zero_core_pool(red_probs=red_probs, batch_offset=batch_offset)
 
             # 7. Structured Rationale and Filter Metadata
             top1_b, top2_b = ranked_blues[0], ranked_blues[1]
             p1, p2 = float(probs[top1_b - 1]), float(probs[top2_b - 1])
+            model_label = "SSQ-NeuralNet-Compact-2.8MB" if neural_used else "Ensemble-Hazard-Markov-Momentum"
 
             ai_reasoning = (
-                f"### Target Issue {target_issue} Quantitative Prediction Rationale\n"
-                f"- **Strategy Mode**: {canonical_strategy} ({alloc_mode})\n"
-                f"- **Adaptive Weights**: Hazard={active_weights[0]:.2f}, Markov={active_weights[1]:.2f}, Momentum={active_weights[2]:.2f}\n"
-                f"- **Blue Ball Ensemble Top-2**: Blue {top1_b:02d} ({p1:.2%}), Blue {top2_b:02d} ({p2:.2%})\n"
-                f"- **Blue Allocation**: {allocated_blues}\n"
-                f"- **Break-Even Payoff Matrix**: When Blue {top1_b:02d} hits, 3 notes hit -> 15 RMB (+50% ROI, +5 RMB net profit); "
-                f"when Blue {top2_b:02d} hits, 2 notes hit -> 10 RMB (Exact Break-Even, 0% ROI).\n"
-                f"- **Red Candidate Pool (Dan-Tuo)**: Cores={cores}, Satellites={satellites}\n"
-                f"- **Statistical Guardrails**: All 5 lines satisfy AC >= {ac_min}, Sum in [{sum_min}, {sum_max}], Odd Parity in {{2,3,4}}, Consec <= 2, Span in [18, 30].\n"
-                f"- **Negative Expectation Disclaimer**: SSQ expected return E[X] < 0 due to official 50% house edge. "
-                f"This strategy eliminates retail single-hit negative return given a blue hit, but cannot overcome mathematical house edge over infinite horizon.\n"
+                f"### Target Issue {target_issue} Quantitative Prediction Rationale (Batch Offset: {batch_offset})\n"
+                f"- **Engine**: {model_label} | **Strategy**: {canonical_strategy} ({alloc_mode})\n"
+                f"- **Blue Ball Allocation**: {allocated_blues} (Top 1: Blue {top1_b:02d} [{p1:.2%}], Top 2: Blue {top2_b:02d} [{p2:.2%}])\n"
+                f"- **Red Candidate Pool (13-Ball Zero-Core)**: {candidate_pool}\n"
+                f"- **Orthogonal Covering**: Pairwise intersection <= 3, Lines 1-3 Central Profile (Sum [{sum_min}, {sum_max}]), Lines 4-5 Wing Defense.\n"
+                f"- **Negative Expectation Disclaimer**: SSQ expected return E[X] < 0. Strategy maximizes break-even probability and eliminates retail core deadlocks.\n"
             )
 
             filter_params = {
                 "ac_min": ac_min,
                 "sum_range": [sum_min, sum_max],
-                "odd_counts": [2, 3, 4],
-                "max_consecutive_pairs": 2,
-                "cores": cores,
-                "satellites": satellites,
+                "candidate_pool": candidate_pool,
                 "allocated_blues": allocated_blues,
                 "adaptive_mode": alloc_mode,
-                "weights": list(active_weights),
+                "batch_offset": batch_offset,
+                "neural_used": neural_used,
             }
 
             # 7. Persist PredictionBatch with Deduplication
@@ -226,7 +256,7 @@ class PredictionService:
                 batch = PredictionBatch(
                     target_issue=target_issue,
                     strategy_type=canonical_strategy,
-                    model_name="Ensemble-Hazard-Markov-Momentum",
+                    model_name=model_label,
                     filter_params_json=json.dumps(filter_params),
                     ai_reasoning_md=ai_reasoning,
                     total_notes=5,
@@ -253,7 +283,7 @@ class PredictionService:
                         red_6=line_reds[5],
                         blue_1=b_val,
                         confidence_score=conf,
-                        rationale=f"Note {note_idx}: Cores {cores} + Blue {b_val:02d}",
+                        rationale=f"Note {note_idx}: Zero-Core Orthogonal Wheel + Blue {b_val:02d}",
                         is_verified=False,
                     )
                     session.add(item)
@@ -266,7 +296,7 @@ class PredictionService:
                 batch = PredictionBatch(
                     target_issue=target_issue,
                     strategy_type=canonical_strategy,
-                    model_name="Ensemble-Hazard-Markov-Momentum",
+                    model_name=model_label,
                     filter_params_json=json.dumps(filter_params),
                     ai_reasoning_md=ai_reasoning,
                     total_notes=5,
@@ -292,7 +322,7 @@ class PredictionService:
                         red_6=line_reds[5],
                         blue_1=b_val,
                         confidence_score=conf,
-                        rationale=f"Note {note_idx}: Cores {cores} + Blue {b_val:02d}",
+                        rationale=f"Note {note_idx}: Zero-Core Orthogonal Wheel + Blue {b_val:02d}",
                         is_verified=False,
                     )
                     session.add(item)

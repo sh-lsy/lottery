@@ -35,6 +35,7 @@ export interface PredictionGenerateRequest {
   span_max?: number;
   blue_mode?: string | null;
   adaptive_enabled?: boolean;
+  batch_offset?: number;
   save_to_db?: boolean;
   custom_filters?: Record<string, any> | null;
 }

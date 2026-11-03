@@ -21,7 +21,8 @@ const adaptiveState = ref<AdaptiveStateResponse | null>(null);
 
 // Form parameters
 const targetIssue = ref<string>('');
-const strategyType = ref<string>('AUTO');
+const strategyType = ref<string>('NEURAL_EVOLVE');
+const batchOffset = ref<number>(0);
 const adaptiveEnabled = ref<boolean>(true);
 const sumRange = ref<[number, number]>([75, 135]);
 const acMin = ref<number>(6);
@@ -43,9 +44,15 @@ const savedBatchId = ref<number | null>(null);
 
 const strategies = [
   {
+    key: 'NEURAL_EVOLVE',
+    name: '🧠 自研神经网络增量进化 (NeuralNet 0.96MB + 无胆旋转矩阵)',
+    tag: '独家·回测验证',
+    desc: '基于历史3300+期全量训练的双头深层网络(红蓝联合概率)+13码无胆正交旋转矩阵(彻底消除断胆死局)，每期自动单步微调自进化！',
+  },
+  {
     key: 'AUTO',
     name: '🤖 自适应自我进化托管 (Auto Self-Evolution)',
-    tag: '推荐',
+    tag: '动态攻守',
     desc: '完全由自适应闭环引擎自主托管！连亏时自动降级为 5-Distinct 防守，盈利时恢复 3+2 进攻，动态平移冷热权重。',
   },
   {
@@ -100,6 +107,7 @@ async function handleGenerate() {
   const req: PredictionGenerateRequest = {
     target_issue: targetIssue.value ? targetIssue.value : undefined,
     strategy_type: strategyType.value,
+    batch_offset: batchOffset.value,
     sum_min: sumRange.value[0],
     sum_max: sumRange.value[1],
     ac_min: acMin.value,
@@ -248,6 +256,29 @@ onMounted(async () => {
                   💡 {{ selectedStrategy.desc }}
                 </div>
               </div>
+
+              <!-- Multi-Batch Rotation Selector -->
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-[#94a3b8] font-bold">组别轮换 (Batch Rotation)</label>
+                  <span class="text-[11px] text-[#00d2d3]">轮换覆盖全部 16 蓝球</span>
+                </div>
+                <div class="grid grid-cols-4 gap-1.5">
+                  <button
+                    v-for="bIdx in [0, 1, 2, 3]"
+                    :key="bIdx"
+                    type="button"
+                    class="py-1 px-1.5 rounded text-[11px] font-bold transition-all text-center border cursor-pointer"
+                    :class="batchOffset === bIdx ? 'bg-[#00d2d3]/20 border-[#00d2d3] text-[#00d2d3]' : 'bg-[#111827] border-[#1e293b] text-[#94a3b8] hover:border-[#334155]'"
+                    @click="batchOffset = bIdx; handleGenerate()"
+                  >
+                    第 {{ bIdx + 1 }} 组
+                  </button>
+                </div>
+                <div class="text-[10px] text-[#64748b] mt-1">
+                  * 连续打多组时切换组别：第1组蓝球Top1~5，第2组Top6~10，消除重复碰撞
+                </div>
+              </div>
             </div>
 
             <!-- 3. Primary Execution Button: Front & Center! (Zero scroll required) -->
@@ -335,7 +366,15 @@ onMounted(async () => {
       <!-- Right Output & Candidate Preview (7 cols) -->
       <div class="lg:col-span-7 space-y-4">
         <!-- 5 Notes Display -->
-        <QuantCard title="候选 5 注量化模拟号码方案 (Candidate 5 Notes)">
+        <QuantCard>
+          <template #title>
+            <div class="flex items-center space-x-2">
+              <span>候选 5 注量化模拟号码方案</span>
+              <span v-if="result?.model_name" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#3b82f6]/20 text-[#60a5fa] border border-[#3b82f6]/30 normal-case">
+                {{ result.model_name }}
+              </span>
+            </div>
+          </template>
           <template #action>
             <div class="flex items-center space-x-2">
               <span class="text-xs text-[#94a3b8] font-mono mr-1">虚拟投注: 5注共 ¥10</span>

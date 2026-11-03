@@ -199,6 +199,7 @@ class PredictionGenerateRequest(BaseModel):
     span_max: int = 30
     blue_mode: Optional[str] = None
     adaptive_enabled: bool = True
+    batch_offset: int = 0
     save_to_db: bool = False
     persist: bool = False  # alias
     custom_filters: Optional[Dict[str, Any]] = None

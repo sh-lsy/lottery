@@ -245,24 +245,33 @@ class BlueScoringEngine:
 
 
 class BlueAllocationStrategy:
-    """Confidence-weighted blue ball allocation to guarantee break-even on hit."""
+    """Confidence-weighted blue ball allocation to guarantee break-even on hit with rotation support."""
 
     @staticmethod
     def allocate(
         ranked_balls: List[int],
         probs: Optional[np.ndarray] = None,
         mode: str = "AUTO",
+        batch_offset: int = 0,
     ) -> List[int]:
         """
         Allocate blue balls across exactly 5 notes.
+        Supports dynamic confidence thresholding and multi-batch rotation.
 
-        :param ranked_balls: List of blue balls in descending order of confidence.
+        :param ranked_balls: List of blue balls in descending order of confidence (1..16).
         :param probs: Optional calibrated probabilities array of length 16.
-        :param mode: 'CONCENTRATED', 'BALANCED', 'DISPERSED', or 'AUTO' (and aliases).
+        :param mode: 'DYNAMIC_THRESHOLD', 'CONCENTRATED', 'BALANCED', 'DISPERSED', or 'AUTO'.
+        :param batch_offset: Offset index for multi-batch rotation (e.g. 0 -> top 1-5, 1 -> 6-10).
         :return: Exactly 5 blue ball integers for Line 1..5.
         """
         if len(ranked_balls) < 2:
             raise ValueError("ranked_balls must contain at least 2 balls")
+
+        # Multi-batch rotation (offsets through 16 balls across consecutive batches)
+        if batch_offset > 0 and len(ranked_balls) >= 5:
+            start_idx = (batch_offset * 5) % len(ranked_balls)
+            rotated = [ranked_balls[(start_idx + i) % len(ranked_balls)] for i in range(5)]
+            return rotated
 
         top1 = ranked_balls[0]
         top2 = ranked_balls[1]
@@ -278,24 +287,22 @@ class BlueAllocationStrategy:
         if m in ("CONCENTRATED", "CONCENTRATED_BREAK_EVEN", "BREAK_EVEN"):
             return [top1, top1, top1, top2, top2]
 
-        if m in ("BALANCED", "STAT_FILTER"):
-            return [top1, top1, top2, top2, top3]
-
-        if m in ("AUTO", "ML_PROB"):
+        if m in ("DYNAMIC_THRESHOLD", "AUTO", "ML_PROB", "NEURAL_EVOLVE"):
             if probs is not None:
                 p_top1 = float(probs[top1 - 1])
-                p_top2 = float(probs[top2 - 1])
-                delta = p_top1 - p_top2
-                # High-confidence offensive spike -> 3+2 Concentrated
-                if delta >= 0.15 and p_top1 >= 0.28:
+                # Dynamic Threshold: Only concentrate to 3+2 if top1 confidence is genuinely high (> 0.12)
+                if p_top1 >= 0.12:
                     return [top1, top1, top1, top2, top2]
-                # Moderate confidence -> 2+2+1 Balanced
-                elif delta >= 0.08 or (p_top1 + p_top2) >= 0.26:
+                elif p_top1 >= 0.09:
                     return [top1, top1, top2, top2, top3]
-                # Standard defensive capital preservation -> 5-Distinct Dispersed (31.25% coverage)
                 else:
-                    return list(ranked_balls[:5])
-            return list(ranked_balls[:5])
+                    # Defensive 5-distinct max coverage (31.25%)
+                    return list(ranked_balls[:5]) if len(ranked_balls) >= 5 else [top1, top1, top1, top2, top2]
+            # Without probability array, default to 5-distinct max coverage for break-even defense
+            return list(ranked_balls[:5]) if len(ranked_balls) >= 5 else [top1, top1, top1, top2, top2]
+
+        if m in ("BALANCED", "STAT_FILTER"):
+            return [top1, top1, top2, top2, top3]
 
         # Default fallback to high-defense dispersed 5-distinct
         return list(ranked_balls[:5]) if len(ranked_balls) >= 5 else [top1, top1, top1, top2, top2]

@@ -94,7 +94,7 @@ def generate_prediction(
 
     if request.blue_mode:
         alloc_mode = request.blue_mode.upper()
-    elif canonical_strategy in ("CONCENTRATED_BREAK_EVEN", "ML_PROB", "AUTO") and adaptive_mode:
+    elif canonical_strategy in ("CONCENTRATED_BREAK_EVEN", "AUTO") and adaptive_mode:
         alloc_mode = adaptive_mode
     else:
         mode_map = {
@@ -102,18 +102,42 @@ def generate_prediction(
             "DISPERSED_BASELINE": "DISPERSED",
             "STAT_FILTER": "BALANCED",
             "ML_PROB": adaptive_mode or "AUTO",
+            "NEURAL_EVOLVE": "AUTO",
             "AUTO": adaptive_mode or "CONCENTRATED",
         }
         alloc_mode = mode_map.get(canonical_strategy, "CONCENTRATED")
 
-    # 4. Blue Ball Multi-Model Scoring
-    blue_engine = BlueScoringEngine(history_blues)
-    probs, ranked_blues = blue_engine.compute_ensemble_probabilities(weights=active_weights)
-    allocated_blues = BlueAllocationStrategy.allocate(ranked_blues, probs, mode=alloc_mode)
+    batch_offset = getattr(request, "batch_offset", 0)
 
-    # 5. Red Dan-Tuo Candidate Pool & Wheeling
+    # 4. Neural Network or Statistical Probability Estimation
+    neural_used = False
+    red_probs = None
+    if canonical_strategy in ("NEURAL_EVOLVE", "ML_PROB"):
+        try:
+            from backend.app.services.neural_model import SSQNeuralPredictor
+            import numpy as np
+            predictor = SSQNeuralPredictor()
+            r_p, b_p = predictor.predict_probabilities(historical_draws)
+            red_probs = r_p
+            probs = b_p
+            neural_used = True
+            ranked_blues = (np.argsort(probs)[::-1] + 1).tolist()
+        except Exception:
+            neural_used = False
+
+    if not neural_used:
+        blue_engine = BlueScoringEngine(history_blues)
+        probs, ranked_blues = blue_engine.compute_ensemble_probabilities(weights=active_weights)
+
+    allocated_blues = BlueAllocationStrategy.allocate(
+        ranked_blues,
+        probs,
+        mode=alloc_mode,
+        batch_offset=batch_offset,
+    )
+
+    # 5. Red Candidate Pool & Wheeling Generation
     red_engine = RedWheelingEngine(history_reds)
-    cores, satellites = red_engine.select_candidate_pool()
     custom_filters = {
         "sum_min": sum_min,
         "sum_max": sum_max,
@@ -122,7 +146,21 @@ def generate_prediction(
         "span_min": request.span_min,
         "span_max": request.span_max,
     }
-    red_lines = red_engine.generate_5_lines(custom_filters=custom_filters)
+
+    if canonical_strategy == "NEURAL_EVOLVE":
+        red_lines = red_engine.generate_5_lines_zero_core(
+            custom_filters=custom_filters,
+            red_probs=red_probs,
+            batch_offset=batch_offset,
+        )
+        pool = red_engine.select_zero_core_pool(red_probs=red_probs, batch_offset=batch_offset)
+        cores = pool[:4]
+        satellites = pool[4:]
+        model_name = "SSQ-NeuralNet-Compact-0.96MB"
+    else:
+        cores, satellites = red_engine.select_candidate_pool()
+        red_lines = red_engine.generate_5_lines(custom_filters=custom_filters)
+        model_name = "SSQ-NeuralNet-Compact-0.96MB" if neural_used else "Ensemble-Hazard-Markov-Momentum"
 
     # 6. Build Notes and Per-Line Features
     notes: List[PredictionNoteItem] = []
@@ -135,13 +173,18 @@ def generate_prediction(
         odd_c = sum(1 for r in line_reds if r % 2 == 1)
         span_v = line_reds[-1] - line_reds[0]
 
+        if canonical_strategy == "NEURAL_EVOLVE":
+            line_rationale = f"Line {idx}: ZeroCore Orthogonal Pool + Blue {b_val:02d} ({alloc_mode})"
+        else:
+            line_rationale = f"Line {idx}: Cores {cores} + Blue {b_val:02d} ({alloc_mode})"
+
         notes.append(
             PredictionNoteItem(
                 note_index=idx,
                 reds=line_reds,
                 blue=b_val,
                 confidence_score=round(conf, 4),
-                rationale=f"Line {idx}: Cores {cores} + Blue {b_val:02d} ({alloc_mode})",
+                rationale=line_rationale,
                 sum_red=s_val,
                 ac_value=ac_val,
                 odd_count=odd_c,
@@ -170,15 +213,12 @@ def generate_prediction(
     }
 
     ai_reasoning = (
-        f"### Target Issue {target_issue} Quantitative Prediction Rationale\n"
-        f"- **Strategy Mode**: {canonical_strategy} ({alloc_mode})\n"
+        f"### Target Issue {target_issue} Quantitative Prediction Rationale (Batch Offset: {batch_offset})\n"
+        f"- **Strategy Mode**: {canonical_strategy} ({alloc_mode}) | **Model**: {model_name}\n"
         f"- **Adaptive Weights**: Hazard={active_weights[0]:.2f}, Markov={active_weights[1]:.2f}, Momentum={active_weights[2]:.2f}\n"
-        f"- **Blue Ball Ensemble Top-2**: Blue {top1_b:02d} ({p1:.2%}), Blue {top2_b:02d} ({p2:.2%})\n"
+        f"- **Blue Ball Top-2**: Blue {top1_b:02d} ({p1:.2%}), Blue {top2_b:02d} ({p2:.2%})\n"
         f"- **Blue Allocation**: {allocated_blues}\n"
-        f"- **Break-Even Payoff Matrix**: When Blue {top1_b:02d} hits, 3 notes hit -> 15 RMB (+50% ROI, +5 RMB net profit); "
-        f"when Blue {top2_b:02d} hits, 2 notes hit -> 10 RMB (Exact Break-Even, 0% ROI).\n"
-        f"- **Red Candidate Pool (Dan-Tuo)**: Cores={cores}, Satellites={satellites}\n"
-        f"- **Statistical Guardrails**: All 5 lines satisfy AC >= {ac_min}, Sum in [{sum_min}, {sum_max}], Odd Parity in {{2,3,4}}, Consec <= 2, Span in [18, 30].\n"
+        f"- **Candidate Pool**: Cores={cores}, Satellites={satellites}\n"
         f"- **Negative Expectation Disclaimer**: SSQ expected return E[X] < 0 due to official 50% house edge. "
         f"This strategy eliminates retail single-hit negative return given a blue hit, but cannot overcome mathematical house edge over infinite horizon.\n"
     )
@@ -193,6 +233,8 @@ def generate_prediction(
         "allocated_blues": allocated_blues,
         "alloc_mode": alloc_mode,
         "weights": list(active_weights),
+        "batch_offset": batch_offset,
+        "neural_used": neural_used,
     }
 
     blue_probabilities = [
@@ -229,7 +271,7 @@ def generate_prediction(
             batch = PredictionBatch(
                 target_issue=target_issue,
                 strategy_type=canonical_strategy,
-                model_name="Ensemble-Hazard-Markov-Momentum",
+                model_name=model_name,
                 filter_params_json=json.dumps(filter_params),
                 ai_reasoning_md=ai_reasoning,
                 total_notes=5,
@@ -263,7 +305,7 @@ def generate_prediction(
     return PredictionGenerateResponse(
         target_issue=target_issue,
         strategy_type=canonical_strategy,
-        model_name="Ensemble-Hazard-Markov-Momentum",
+        model_name=model_name,
         total_notes=5,
         notes=notes,
         ai_reasoning_md=ai_reasoning,
