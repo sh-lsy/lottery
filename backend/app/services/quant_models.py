@@ -287,7 +287,7 @@ class BlueAllocationStrategy:
         if m in ("CONCENTRATED", "CONCENTRATED_BREAK_EVEN", "BREAK_EVEN"):
             return [top1, top1, top1, top2, top2]
 
-        if m in ("DYNAMIC_THRESHOLD", "AUTO", "ML_PROB", "NEURAL_EVOLVE"):
+        if m in ("DYNAMIC_THRESHOLD", "AUTO", "ML_PROB"):
             if probs is not None:
                 p_top1 = float(probs[top1 - 1])
                 # Dynamic Threshold: Only concentrate to 3+2 if top1 confidence is genuinely high (> 0.12)
@@ -301,7 +301,7 @@ class BlueAllocationStrategy:
             # Without probability array, default to 5-distinct max coverage for break-even defense
             return list(ranked_balls[:5]) if len(ranked_balls) >= 5 else [top1, top1, top1, top2, top2]
 
-        if m in ("BALANCED", "STAT_FILTER"):
+        if m in ("BALANCED", "STAT_FILTER", "NEURAL_EVOLVE", "YIJING_METAPHYSICS"):
             return [top1, top1, top2, top2, top3]
 
         # Default fallback to high-defense dispersed 5-distinct

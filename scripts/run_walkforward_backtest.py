@@ -132,7 +132,7 @@ def run_benchmark():
             omiss_scores[b - 1] = np.exp(-((o - 5.5)**2) / 32.0)
         omiss_probs = omiss_scores / np.sum(omiss_scores)
 
-        v1_fused_red = 0.65 * nn_red_probs + 0.35 * omiss_probs
+        v1_fused_red = 0.80 * nn_red_probs + 0.20 * omiss_probs
         v1_fused_blue = 0.50 * nn_blue_probs + 0.50 * q_blue_probs
         v1_ranked_blues = (np.argsort(v1_fused_blue)[::-1] + 1).tolist()
         v1_red_lines = red_engine.generate_5_lines_zero_core(red_probs=v1_fused_red)

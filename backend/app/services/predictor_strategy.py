@@ -174,7 +174,7 @@ class PredictionService:
                         o = (len(historical_draws) - 1 - last_idx) if last_idx != -1 else len(historical_draws)
                         omiss_scores[b - 1] = np.exp(-((o - 5.5)**2) / 32.0)
                     omiss_probs = omiss_scores / np.sum(omiss_scores)
-                    red_probs = 0.65 * r_p + 0.35 * omiss_probs
+                    red_probs = 0.80 * r_p + 0.20 * omiss_probs
                 except Exception:
                     neural_used = False
 
