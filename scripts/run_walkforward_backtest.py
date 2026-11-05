@@ -27,7 +27,7 @@ from backend.app.models import DrawHistory
 from backend.app.services.neural_model import SSQNeuralPredictor
 from backend.app.services.metaphysics_engine import MetaphysicsEngine
 from backend.app.services.wheeling_engine import RedWheelingEngine
-from backend.app.services.quant_models import BlueAllocationStrategy
+from backend.app.services.quant_models import BlueScoringEngine, BlueAllocationStrategy
 from backend.app.services.verifier import VerificationService
 
 
@@ -72,6 +72,7 @@ def run_benchmark():
             "blue_hit_count": 0,
             "prize_counts": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 0: 0},
             "red_hit_max_counts": {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0},
+            "rewards_history": [],
         },
         "V2_METAPHYSICS": {
             "name": "周易八卦五行双轨融合版 (Bagua Metaphysics)",
@@ -81,6 +82,7 @@ def run_benchmark():
             "blue_hit_count": 0,
             "prize_counts": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 0: 0},
             "red_hit_max_counts": {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0},
+            "rewards_history": [],
         },
     }
 
@@ -114,10 +116,27 @@ def run_benchmark():
         meta_fused_blue = 0.70 * nn_blue_probs + 0.30 * np.array(meta_blue_probs)
 
         # C. Generate 5-line tickets for both models
-        # Model 1: Pure Quant
-        v1_ranked_blues = (np.argsort(nn_blue_probs)[::-1] + 1).tolist()
-        v1_red_lines = red_engine.generate_5_lines_zero_core(red_probs=nn_red_probs)
-        v1_blues = BlueAllocationStrategy.allocate(v1_ranked_blues, probs=nn_blue_probs, mode="BALANCED")
+        # Model 1: Pure Quant (Neural + Dynamic Quant Omission/Momentum)
+        history_blues = [d.blue_1 for d in history_window]
+        q_blue_engine = BlueScoringEngine(history_blues)
+        q_blue_probs, _ = q_blue_engine.compute_ensemble_probabilities(weights=(0.40, 0.25, 0.20, 0.15), tau=0.75)
+
+        omiss_scores = np.zeros(33)
+        for b in range(1, 34):
+            last_idx = -1
+            for h_i in range(len(history_window) - 1, -1, -1):
+                if b in history_window[h_i].reds:
+                    last_idx = h_i
+                    break
+            o = (len(history_window) - 1 - last_idx) if last_idx != -1 else len(history_window)
+            omiss_scores[b - 1] = np.exp(-((o - 5.5)**2) / 32.0)
+        omiss_probs = omiss_scores / np.sum(omiss_scores)
+
+        v1_fused_red = 0.65 * nn_red_probs + 0.35 * omiss_probs
+        v1_fused_blue = 0.50 * nn_blue_probs + 0.50 * q_blue_probs
+        v1_ranked_blues = (np.argsort(v1_fused_blue)[::-1] + 1).tolist()
+        v1_red_lines = red_engine.generate_5_lines_zero_core(red_probs=v1_fused_red)
+        v1_blues = BlueAllocationStrategy.allocate(v1_ranked_blues, probs=v1_fused_blue, mode="BALANCED")
 
         # Model 2: Bagua Metaphysics
         v2_ranked_blues = (np.argsort(meta_fused_blue)[::-1] + 1).tolist()
@@ -146,6 +165,7 @@ def run_benchmark():
             m1["prize_counts"][audit["prize_level"]] += 1
 
         m1["total_reward"] += m1_reward
+        m1["rewards_history"].append(m1_reward)
         if m1_reward >= 10:
             m1["break_even_count"] += 1
         if m1_blue_hit:
@@ -174,6 +194,7 @@ def run_benchmark():
             m2["prize_counts"][audit["prize_level"]] += 1
 
         m2["total_reward"] += m2_reward
+        m2["rewards_history"].append(m2_reward)
         if m2_reward >= 10:
             m2["break_even_count"] += 1
         if m2_blue_hit:
@@ -269,6 +290,37 @@ def run_benchmark():
     print(f"{'9-Issue ROI (投资回报率)':<30} | {roi_r1:>+9.2f}%               | {roi_r2:>+9.2f}%")
     print(f"{'9-Issue Break-Even Rate':<30} | {r1['be']}/9 ({r1['be']/9*100:.1f}%)                 | {r2['be']}/9 ({r2['be']/9*100:.1f}%)")
     print(f"{'9-Issue Blue Hit Rate':<30} | {r1['blue']}/9 ({r1['blue']/9*100:.1f}%)               | {r2['blue']}/9 ({r2['blue']/9*100:.1f}%)")
+    print("=" * 90)
+
+    # 5. Consecutive 5-Issue Purchase & Recovery Analysis (User Goal Benchmark)
+    print("\n" + "=" * 90)
+    print("CONSECUTIVE 5-ISSUE RECOVERY ANALYSIS (5 Draws / 25 Notes / Cost 50 RMB per cycle)")
+    print("=" * 90)
+    print(f"{'Performance Metric':<30} | {'V1: 纯量化优化版':<26} | {'V2: 周易八卦五行双轨版':<26}")
+    print("-" * 90)
+
+    for k in ["V1_PURE_QUANT", "V2_METAPHYSICS"]:
+        m = models[k]
+        rews = np.array(m["rewards_history"])
+        rolling_5 = np.convolve(rews, np.ones(5, dtype=int), 'valid')
+        blocks_5 = [int(np.sum(rews[i:i+5])) for i in range(0, len(rews)-4, 5)]
+        m["recovery_5_issue"] = {
+            "rolling_windows": len(rolling_5),
+            "rolling_recovered": int(np.sum(rolling_5 >= 50)),
+            "rolling_recovery_rate": float(np.mean(rolling_5 >= 50) * 100.0),
+            "block_count": len(blocks_5),
+            "blocks_recovered": int(sum(x >= 50 for x in blocks_5)),
+            "block_recovery_rate": float(np.mean([x >= 50 for x in blocks_5]) * 100.0),
+            "avg_5_issue_reward": float(np.mean(rolling_5)),
+            "max_5_issue_reward": int(np.max(rolling_5)),
+        }
+
+    rec1 = models["V1_PURE_QUANT"]["recovery_5_issue"]
+    rec2 = models["V2_METAPHYSICS"]["recovery_5_issue"]
+    print(f"{'5-Issue Rolling Recovery (>=50元)':<28} | {rec1['rolling_recovered']}/{rec1['rolling_windows']} ({rec1['rolling_recovery_rate']:.1f}%)               | {rec2['rolling_recovered']}/{rec2['rolling_windows']} ({rec2['rolling_recovery_rate']:.1f}%)")
+    print(f"{'5-Issue Blocks Recovery (>=50元)':<28} | {rec1['blocks_recovered']}/{rec1['block_count']} ({rec1['block_recovery_rate']:.1f}%)                 | {rec2['blocks_recovered']}/{rec2['block_count']} ({rec2['block_recovery_rate']:.1f}%)")
+    print(f"{'Average 5-Issue Return (5期均收益)':<28} | {rec1['avg_5_issue_reward']:>9.1f} RMB              | {rec2['avg_5_issue_reward']:>9.1f} RMB")
+    print(f"{'Max 5-Issue Return (5期最高收益)':<28} | {rec1['max_5_issue_reward']:>9,} RMB              | {rec2['max_5_issue_reward']:>9,} RMB")
     print("=" * 90)
 
     return models
