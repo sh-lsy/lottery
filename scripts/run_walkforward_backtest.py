@@ -57,7 +57,7 @@ def run_benchmark():
     print("\n[Step 1] Training base neural network model on first 3,300 draws...")
     predictor = SSQNeuralPredictor(model_path=model_path)
     t0 = time.time()
-    res = predictor.train_base_model(draws[:train_size], epochs=10, batch_size=64, lr=0.002, verbose=True)
+    res = predictor.train_base_model(draws[:train_size], epochs=20, batch_size=64, lr=0.002, verbose=True)
     t_train = time.time() - t0
     model_mb = os.path.getsize(model_path) / (1024 * 1024)
     print(f"Base model ready in {t_train:.1f}s! Size: {model_mb:.2f} MB, Final Loss: {res['final_loss']:.4f}")

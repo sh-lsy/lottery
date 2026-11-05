@@ -1,8 +1,8 @@
 """
 Lightweight multi-task neural network for Shuangseqiu lottery sequence learning.
 Outputs joint probability distributions for 33 red balls and 16 blue balls.
-Supports initial base training on historical draws and online incremental self-evolution (fine-tuning).
-Model weights are saved as a compact PyTorch checkpoint (~1.5 MB - 2.5 MB).
+Supports temporal Multi-Head Attention, Focal Loss optimization, and online incremental self-evolution.
+Model weights are saved as a compact PyTorch checkpoint (< 1.5 MB).
 """
 
 import os
@@ -15,31 +15,94 @@ import torch.optim as optim
 from backend.app.models import DrawHistory
 
 
+class BinaryFocalLossWithLogits(nn.Module):
+    """
+    Focal Loss for multi-label red ball imbalance.
+    Suppresses well-classified negatives and prioritizes hard positive balls.
+    """
+
+    def __init__(self, alpha: float = 0.65, gamma: float = 2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        probs = torch.sigmoid(logits)
+        p_t = targets * probs + (1.0 - targets) * (1.0 - probs)
+        alpha_t = targets * self.alpha + (1.0 - targets) * (1.0 - self.alpha)
+        modulating = (1.0 - p_t) ** self.gamma
+        return (alpha_t * modulating * bce).mean()
+
+
 class SSQNeuralNet(nn.Module):
     """
-    Compact multi-task deep neural network for sequence prediction.
-    Shared backbone extracts temporal patterns from rolling draw history.
+    Compact multi-task deep neural network for sequence prediction with temporal Multi-Head Attention.
+    Extracts chronological lottery dynamics across rolling draw history.
     Dual output heads predict Red ball probabilities (multi-label) and Blue ball (multi-class).
     """
 
-    def __init__(self, input_dim: int = 55 * 15, hidden_dim1: int = 256, hidden_dim2: int = 128):
+    def __init__(
+        self,
+        input_dim: int = 55 * 15,
+        hidden_dim1: int = 256,
+        hidden_dim2: int = 128,
+        num_heads: int = 4,
+    ):
         super().__init__()
-        self.backbone = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim1),
-            nn.LayerNorm(hidden_dim1),
-            nn.ReLU(),
-            nn.Dropout(0.15),
-            nn.Linear(hidden_dim1, hidden_dim2),
-            nn.LayerNorm(hidden_dim2),
-            nn.ReLU(),
+        self.window_size = 15
+        self.feature_dim = 55
+        self.input_dim = input_dim
+
+        # Temporal sequence projection & position embedding
+        self.input_proj = nn.Linear(55, hidden_dim2)
+        self.pos_embed = nn.Parameter(torch.randn(1, 15, hidden_dim2) * 0.02)
+
+        # Multi-head attention across time steps
+        self.norm1 = nn.LayerNorm(hidden_dim2)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=hidden_dim2,
+            num_heads=num_heads,
+            batch_first=True,
+            dropout=0.1,
         )
-        self.red_head = nn.Linear(hidden_dim2, 33)   # 33 logits for red balls
-        self.blue_head = nn.Linear(hidden_dim2, 16)  # 16 logits for blue ball
+
+        # Feed-forward residual block
+        self.norm2 = nn.LayerNorm(hidden_dim2)
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim2, hidden_dim1),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim1, hidden_dim2),
+        )
+
+        # Dual Heads with normalization
+        self.red_head = nn.Sequential(
+            nn.Linear(hidden_dim2, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Linear(128, 33),
+        )
+        self.blue_head = nn.Sequential(
+            nn.Linear(hidden_dim2, 64),
+            nn.LayerNorm(64),
+            nn.GELU(),
+            nn.Linear(64, 16),
+        )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        features = self.backbone(x)
-        red_logits = self.red_head(features)
-        blue_logits = self.blue_head(features)
+        B = x.shape[0]
+        x_seq = x.view(B, self.window_size, self.feature_dim)
+        h = self.input_proj(x_seq) + self.pos_embed
+
+        attn_out, _ = self.attn(h, h, h)
+        h = self.norm1(h + attn_out)
+        h = self.norm2(h + self.ffn(h))
+
+        # Weighted combination of temporal mean and latest state
+        pooled = 0.5 * h.mean(dim=1) + 0.5 * h[:, -1, :]
+        red_logits = self.red_head(pooled)
+        blue_logits = self.blue_head(pooled)
         return red_logits, blue_logits
 
 
@@ -61,7 +124,10 @@ class SSQNeuralPredictor:
         self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=1e-4)
 
         if os.path.exists(self.model_path):
-            self.load_model(self.model_path)
+            try:
+                self.load_model(self.model_path)
+            except Exception:
+                pass
 
     @staticmethod
     def encode_single_draw(draw: DrawHistory) -> np.ndarray:
@@ -90,32 +156,34 @@ class SSQNeuralPredictor:
         odd_count = sum(1 for x in reds if x % 2 == 1)
         primes = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31}
         prime_count = sum(1 for x in reds if x in primes)
-        zone1_count = sum(1 for x in reds if x <= 11)
+        z1_count = sum(1 for x in reds if x <= 11)
 
-        vec[49] = s / 150.0
-        vec[50] = span / 32.0
-        vec[51] = ac / 10.0
-        vec[52] = odd_count / 6.0
-        vec[53] = prime_count / 6.0
-        vec[54] = zone1_count / 6.0
+        vec[49] = (s - 102.0) / 30.0
+        vec[50] = (span - 24.0) / 6.0
+        vec[51] = (ac - 6.5) / 2.0
+        vec[52] = (odd_count - 3.0) / 1.5
+        vec[53] = (prime_count - 2.0) / 1.2
+        vec[54] = (z1_count - 2.0) / 1.2
         return vec
 
     def build_dataset(self, draws: List[DrawHistory]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Transforms chronological draw list into (X, y_red, y_blue) tensors.
-        X shape: (N, 55 * window_size)
-        y_red shape: (N, 33) float binary
-        y_blue shape: (N,) int64 class indices 0..15
+        Constructs rolling window dataset from chronological draws.
+        Returns:
+            X: Tensor of shape (N, 55 * window_size)
+            y_red: Tensor of shape (N, 33), binary multi-label targets
+            y_blue: Tensor of shape (N,), multi-class indices (0..15)
         """
-        encoded_draws = [self.encode_single_draw(d) for d in draws]
+        if len(draws) <= self.window_size:
+            raise ValueError(f"Need at least {self.window_size + 1} draws to build dataset.")
+
+        encoded_all = [self.encode_single_draw(d) for d in draws]
         X_list, y_red_list, y_blue_list = [], [], []
 
         for i in range(self.window_size, len(draws)):
-            # Flatten window of draws [i - window_size : i]
-            window_slice = np.concatenate(encoded_draws[i - self.window_size : i])
-            X_list.append(window_slice)
+            feat_window = np.concatenate(encoded_all[i - self.window_size : i], axis=0)
+            X_list.append(feat_window)
 
-            # Target draw is draws[i]
             target_red = np.zeros(33, dtype=np.float32)
             for r in draws[i].reds:
                 if 1 <= r <= 33:
@@ -131,13 +199,14 @@ class SSQNeuralPredictor:
     def train_base_model(
         self,
         draws: List[DrawHistory],
-        epochs: int = 15,
+        epochs: int = 20,
         batch_size: int = 64,
-        lr: float = 1e-3,
+        lr: float = 2e-3,
         verbose: bool = True,
     ) -> Dict[str, float]:
         """
-        Trains model from scratch on historical dataset (e.g. first 3300 draws).
+        Trains model from scratch on historical dataset (e.g. first 3300 draws)
+        with Focal Loss and Cosine Annealing learning rate schedule.
         Saves checkpoint to self.model_path upon completion.
         """
         if len(draws) <= self.window_size + 10:
@@ -147,9 +216,10 @@ class SSQNeuralPredictor:
         n_samples = X.shape[0]
 
         self.model.train()
-        criterion_red = nn.BCEWithLogitsLoss()
+        criterion_red = BinaryFocalLossWithLogits(alpha=0.65, gamma=2.0)
         criterion_blue = nn.CrossEntropyLoss()
         optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-4)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-4)
 
         final_loss = 0.0
         for ep in range(epochs):
@@ -164,7 +234,7 @@ class SSQNeuralPredictor:
                 pred_r, pred_b = self.model(bx)
                 loss_r = criterion_red(pred_r, by_r)
                 loss_b = criterion_blue(pred_b, by_b)
-                loss = loss_r + loss_b * 1.5
+                loss = loss_r * 2.0 + loss_b * 1.5
 
                 loss.backward()
                 optimizer.step()
@@ -172,10 +242,11 @@ class SSQNeuralPredictor:
                 epoch_loss += loss.item()
                 steps += 1
 
+            scheduler.step()
             avg_loss = epoch_loss / max(1, steps)
             final_loss = avg_loss
             if verbose and (ep + 1) % 5 == 0:
-                print(f"[SSQNeuralNet] Epoch {ep+1}/{epochs} - Loss: {avg_loss:.4f}")
+                print(f"[SSQNeuralNet] Epoch {ep+1}/{epochs} - Loss: {avg_loss:.4f} - LR: {scheduler.get_last_lr()[0]:.6f}")
 
         self.save_model(self.model_path)
         return {"final_loss": final_loss, "epochs": epochs, "samples": n_samples}
@@ -188,18 +259,17 @@ class SSQNeuralPredictor:
             blue_probs: np.ndarray of shape (16,), normalized probabilities summing to 1.0
         """
         if len(historical_draws) < self.window_size:
-            # Fallback uniform
-            return np.ones(33) * (6.0 / 33.0), np.ones(16) / 16.0
+            return np.ones(33) / 33.0, np.ones(16) / 16.0
 
-        encoded_window = [self.encode_single_draw(d) for d in historical_draws[-self.window_size:]]
+        encoded_window = [self.encode_single_draw(d) for d in historical_draws[-self.window_size :]]
         x_flat = np.concatenate(encoded_window).astype(np.float32)
         x_tensor = torch.tensor(x_flat, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         self.model.eval()
         with torch.no_grad():
             red_logits, blue_logits = self.model(x_tensor)
-            red_probs = torch.sigmoid(red_logits).squeeze(0).cpu().numpy()
-            blue_probs = torch.softmax(blue_logits, dim=-1).squeeze(0).cpu().numpy()
+            red_probs = torch.sigmoid(red_logits).cpu().numpy().squeeze(0)
+            blue_probs = torch.softmax(blue_logits, dim=-1).cpu().numpy().squeeze(0)
 
         return red_probs, blue_probs
 
@@ -207,18 +277,18 @@ class SSQNeuralPredictor:
         self,
         actual_draw: DrawHistory,
         history_prior: List[DrawHistory],
-        lr: float = 5e-4,
-        steps: int = 2,
+        lr: float = 1e-4,
+        steps: int = 1,
     ) -> float:
         """
-        Online incremental fine-tuning: incorporates actual_draw as new supervision.
+        Online learning step: updates neural network weights given the authentic draw outcome.
         Executes gradient steps on CPU (typically < 30ms) and saves updated checkpoint.
         Returns loss value.
         """
         if len(history_prior) < self.window_size:
             return 0.0
 
-        encoded_window = [self.encode_single_draw(d) for d in history_prior[-self.window_size:]]
+        encoded_window = [self.encode_single_draw(d) for d in history_prior[-self.window_size :]]
         x_flat = np.concatenate(encoded_window).astype(np.float32)
         x_tensor = torch.tensor(x_flat, dtype=torch.float32, device=self.device).unsqueeze(0)
 
@@ -230,7 +300,7 @@ class SSQNeuralPredictor:
         y_b = torch.tensor([actual_draw.blue_1 - 1], dtype=torch.long, device=self.device)
 
         self.model.train()
-        criterion_red = nn.BCEWithLogitsLoss()
+        criterion_red = BinaryFocalLossWithLogits(alpha=0.65, gamma=2.0)
         criterion_blue = nn.CrossEntropyLoss()
         fine_optimizer = optim.AdamW(self.model.parameters(), lr=lr)
 
@@ -240,7 +310,7 @@ class SSQNeuralPredictor:
             pred_r, pred_b = self.model(x_tensor)
             loss_r = criterion_red(pred_r, y_r)
             loss_b = criterion_blue(pred_b, y_b)
-            loss = loss_r + loss_b * 1.5
+            loss = loss_r * 2.0 + loss_b * 1.5
             loss.backward()
             fine_optimizer.step()
             total_loss += loss.item()
